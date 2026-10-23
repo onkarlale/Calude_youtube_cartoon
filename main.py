@@ -35,21 +35,27 @@ def main():
     seed = random.randint(1, 10**6)
     scenes = []
     print("2/5 Drawing scenes + recording voice...")
+    default_moves = ["zoom_in", "pan_right", "zoom_out", "pan_left"]
     for i, sc in enumerate(data["scenes"]):
         img = f"scene{i:02d}.jpg"
         aud = f"scene{i:02d}.mp3"
         prompt = f"{data['characters']}. {sc['image_prompt']}"
         images.make_image(prompt, os.path.join(outdir, img), seed)
-        voice.synth(sc["narration"], os.path.join(outdir, aud), config.TTS_VOICE)
+        voice.synth(sc["narration"], os.path.join(outdir, aud), config.TTS_VOICE, config.TTS_RATE)
         dur = voice.duration(os.path.join(outdir, aud))
-        scenes.append({"image": img, "audio": aud, "dur": dur, "text": sc["narration"]})
-        print(f"   scene {i+1}/{len(data['scenes'])} done ({dur:.1f}s)")
+        motion = sc.get("motion") if sc.get("motion") in video.MOTIONS else default_moves[i % 4]
+        sfx = sc.get("sfx") if sc.get("sfx") in video.SFX else "none"
+        scenes.append({"image": img, "audio": aud, "dur": dur, "text": sc["narration"],
+                       "motion": motion, "sfx": sfx})
+        print(f"   scene {i+1}/{len(data['scenes'])} done ({dur:.1f}s, {motion}, sfx={sfx})")
 
     print("3/5 Rendering video...")
     final = video.build(scenes, outdir)
 
     print("4/5 Thumbnail...")
-    thumb = thumbnail.make(os.path.join(outdir, scenes[0]["image"]), data["title"],
+    # use the "punchiest" scene (a punch or shake moment) for the thumbnail if there is one
+    pick = next((s for s in scenes if s["motion"] in ("punch", "shake")), scenes[0])
+    thumb = thumbnail.make(os.path.join(outdir, pick["image"]), data["title"],
                            os.path.join(outdir, "thumb.jpg"))
 
     print("5/5 Uploading...")
