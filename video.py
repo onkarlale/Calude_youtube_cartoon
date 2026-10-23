@@ -35,7 +35,8 @@ def build(scenes, outdir, music_dir="assets/music"):
         clip = f"clip{i:02d}.mp4"
         vf = (f"scale={W*2}:{H*2}:force_original_aspect_ratio=increase,crop={W*2}:{H*2},"
               f"zoompan=z='min(zoom+0.0005,1.18)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-              f":d={frames}:s={W}x{H}:fps={FPS},format=yuv420p")
+              f":d={frames}:s={W}x{H}:fps={FPS},format=yuv420p,"
+              f"fade=t=in:st=0:d=0.35,fade=t=out:st={sc['dur'] + PAD - 0.35:.2f}:d=0.35")
         _run(["ffmpeg", "-y", "-i", sc["image"], "-i", sc["audio"],
               "-vf", vf, "-af", f"apad=pad_dur={PAD}",
               "-t", f"{sc['dur'] + PAD:.2f}",
