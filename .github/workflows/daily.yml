@@ -1,0 +1,55 @@
+name: Daily cartoon video
+
+on:
+  schedule:
+    - cron: "30 3 * * *"   # 03:30 UTC = 09:00 IST, every day
+  workflow_dispatch:        # lets you run it manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  make-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system packages
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+
+      - name: Install Python packages
+        run: pip install -r requirements.txt
+
+      - name: Generate story, render video, upload
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY_CLAUDE }}
+          YT_CLIENT_ID: ${{ secrets.YOUR_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          CHANNEL_THEME: ${{ vars.CHANNEL_THEME }}
+          UPLOAD_PRIVACY: ${{ vars.UPLOAD_PRIVACY }}
+          VIDEO_FORMAT: ${{ vars.VIDEO_FORMAT }}
+          TTS_VOICE: ${{ vars.TTS_VOICE }}
+          LANGUAGE: ${{ vars.LANGUAGE }}
+          MADE_FOR_KIDS: ${{ vars.MADE_FOR_KIDS }}
+        run: python main.py
+
+      - name: Keep a copy of the video for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ github.run_id }}
+          path: out/*/final.mp4
+          retention-days: 7
+
+      - name: Save story history (prevents repeats)
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add history.json
+          git diff --cached --quiet || (git commit -m "Update story history" && git push)
