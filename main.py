@@ -14,6 +14,11 @@ def main():
         sys.exit("GROQ_API_KEY is missing (check the GROQ_API_KEY_CLAUDE secret)")
     if not (config.CF_ACCOUNT_ID and config.CF_API_TOKEN):
         sys.exit("Cloudflare secrets missing: add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN (see README).")
+    if "hindi" in config.LANGUAGE.lower():
+        import subprocess
+        fonts = subprocess.run(["fc-list", ":lang=hi"], capture_output=True, text=True).stdout.strip()
+        if not fonts:
+            sys.exit("No Hindi (Devanagari) font installed. Add fonts-noto-core to the apt install step in daily.yml.")
     history = load_history()
     titles = [h["title"] for h in history]
 
