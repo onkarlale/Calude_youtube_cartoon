@@ -20,19 +20,25 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install ffmpeg (static build from GitHub, no Ubuntu mirror)
+      - name: Restore cached tools (ffmpeg + fonts)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/ffmpeg
+            ~/.fonts
+          key: tools-v1
+
+      - name: Install ffmpeg (static build from GitHub)
         id: ffmpeg
         continue-on-error: true
         timeout-minutes: 5
         run: |
-          set -e
+          if [ -x "$HOME/ffmpeg/bin/ffmpeg" ]; then echo "ffmpeg restored from cache"; exit 0; fi
           curl -fL --retry 4 --retry-delay 5 --connect-timeout 20 -o ffmpeg.tar.xz \
             https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
           mkdir -p "$HOME/ffmpeg"
           tar -xf ffmpeg.tar.xz -C "$HOME/ffmpeg" --strip-components=1
-          "$HOME/ffmpeg/bin/ffmpeg" -hide_banner -filters | grep -q " subtitles " || { echo "build has no subtitles filter"; exit 1; }
-          echo "$HOME/ffmpeg/bin" >> "$GITHUB_PATH"
-          "$HOME/ffmpeg/bin/ffmpeg" -version | head -1
+          "$HOME/ffmpeg/bin/ffmpeg" -hide_banner -filters | grep -q " subtitles " || { echo "build has no subtitles filter"; rm -rf "$HOME/ffmpeg"; exit 1; }
 
       - name: Fallback - install ffmpeg with apt
         if: steps.ffmpeg.outcome != 'success'
@@ -41,11 +47,22 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y --no-install-recommends ffmpeg
 
-      - name: Install fonts (small download)
+      - name: Install Hindi font
         timeout-minutes: 6
         run: |
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y --no-install-recommends fonts-noto-core fonts-dejavu-core libfribidi0
+          mkdir -p "$HOME/.fonts"
+          if ls "$HOME"/.fonts/NotoSansDevanagari*.ttf >/dev/null 2>&1; then
+            echo "font restored from cache"
+          else
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y --no-install-recommends fonts-noto-core
+            find /usr/share/fonts -iname 'NotoSansDevanagari*' -exec cp {} "$HOME/.fonts/" \;
+          fi
+
+      - name: Activate tools
+        run: |
+          echo "$HOME/ffmpeg/bin" >> "$GITHUB_PATH"
+          fc-cache -f "$HOME/.fonts" || true
           fc-list :lang=hi | head -3
 
       - name: Install Python packages
