@@ -1,101 +1,133 @@
-import json, re, time, requests
+import os, re, subprocess, shutil
 import config
 
-PREFERRED = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "qwen/qwen3-32b"]
-SKIP = ("whisper", "guard", "tts", "orpheus", "compound", "playai", "embed")
-HEADERS = lambda: {"Authorization": f"Bearer {config.GROQ_API_KEY}"}
+FPS = 25
+PAD = 0.25   # short pause after each scene = snappy cuts
 
+CX = "iw/2-(iw/zoom/2)"
+CY = "ih/2-(ih/zoom/2)"
 
-def _prompt(history_titles):
-    avoid = "; ".join(history_titles[-60:]) or "none yet"
-    return f"""You write original, laugh-out-loud SLAPSTICK COMEDY cartoon stories (fast, energetic, chase-and-mishap style) for a YouTube channel about: {config.CHANNEL_THEME}.
-Story language: {config.LANGUAGE}. Write title, description, tags and every narration line in {config.LANGUAGE}, in natural spoken everyday language like a funny storyteller (not stiff or bookish).
+def _motion(name, n):
+    """zoompan expressions (z, x, y) for each camera move. n = number of frames in the clip."""
+    n = max(n - 1, 1)
+    table = {
+        "zoom_in":   ("min(1.0+0.0012*on,1.3)", CX, CY),
+        "zoom_out":  ("max(1.3-0.0012*on,1.0)", CX, CY),
+        "pan_left":  ("1.22", f"(iw-iw/zoom)*(1-on/{n})", CY),
+        "pan_right": ("1.22", f"(iw-iw/zoom)*(on/{n})", CY),
+        "pan_up":    ("1.22", CX, f"(ih-ih/zoom)*(1-on/{n})"),
+        "pan_down":  ("1.22", CX, f"(ih-ih/zoom)*(on/{n})"),
+        # camera shake that fades out over the first ~1.2 s (crash / explosion)
+        "shake":     ("1.12+0.0005*on",
+                      f"{CX}+sin(on*2.3)*22*max(0,1-on/30)",
+                      f"{CY}+cos(on*2.9)*22*max(0,1-on/30)"),
+        # sudden snap-zoom (surprise / punchline)
+        "punch":     ("1.0+0.22*min(on/5,1)+0.0006*on", CX, CY),
+    }
+    return table[name]
 
-Comedy rules:
-- Open with a funny hook in the very first line.
-- One silly goal or chase that keeps getting worse: escalating mishaps, near-misses, misunderstandings, funny reactions. Pace it like a cartoon: something new happens in EVERY scene.
-- Use comic timing: setup, then punchline. Add funny sound words (धड़ाम, छपाक, बूम, etc.) and playful exaggeration.
-- Finish with a big surprise twist or punchline in the last scene.
-- Family-friendly humor only: no insults about people, religion, caste, looks or regions; no real violence, nothing scary, no brands. Do not copy any existing cartoon characters (original characters only).
+MOTIONS = ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "shake", "punch"]
 
-Write ONE brand-new story. Do NOT reuse these earlier titles or ideas: {avoid}
+# Sound effects are synthesised with FFmpeg, so there is nothing to download and no licence to worry about.
+SFX = {
+    "whoosh": "anoisesrc=d=0.5:c=pink:a=0.5,bandpass=f=1500:w=1200,afade=t=in:d=0.25,afade=t=out:st=0.25:d=0.25",
+    "boing":  "aevalsrc=0.6*sin(2*PI*(350+300*sin(2*PI*9*t))*t)*exp(-4*t):d=0.6",
+    "crash":  "anoisesrc=d=0.8:c=brown:a=0.9,lowpass=f=3500,afade=t=out:st=0.05:d=0.75",
+    "pop":    "aevalsrc=0.7*sin(2*PI*700*t)*exp(-30*t):d=0.2",
+}
 
-Return ONLY valid JSON (no markdown) with this exact shape:
-{{
-  "title": "catchy funny title under 70 characters, in {config.LANGUAGE}",
-  "description": "2-3 sentence funny YouTube description in {config.LANGUAGE}",
-  "tags": ["10 short search tags, mix of {config.LANGUAGE} and English"],
-  "characters": "ENGLISH ONLY: one-line visual description of the 1-2 main characters (species, exact colors, clothes, funny trait) so the art stays consistent",
-  "scenes": [
-    {{
-      "narration": "1-2 SHORT funny sentences in {config.LANGUAGE}, about 15-28 words",
-      "image_prompt": "ENGLISH ONLY: one clear action moment, characters fully visible in a dynamic pose with a funny exaggerated expression, simple background, no text in image",
-      "motion": "one of: zoom_in, zoom_out, pan_left, pan_right, pan_up, pan_down, shake, punch",
-      "sfx": "one of: whoosh, boing, crash, pop, none"
-    }}
-  ]
-}}
-Motion guide: use shake for crashes and explosions, punch for sudden surprises and the final punchline, pan_left/pan_right for chases, zoom_in for suspense, zoom_out for reveals. Sfx guide: crash with shake, whoosh for fast movement, boing for bouncing or stretching, pop for small surprises. Use sfx "none" on about half the scenes.
-Use exactly {config.NUM_SCENES} scenes. The characters and image_prompt fields must be in English because the image model only understands English."""
+def _run(cmd, cwd):
+    p = subprocess.run(cmd, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if p.returncode != 0:
+        raise RuntimeError("ffmpeg failed:\n" + p.stderr[-1500:])
 
+def _make_sfx(name, outdir):
+    path = f"sfx_{name}.wav"
+    if not os.path.exists(os.path.join(outdir, path)):
+        _run(["ffmpeg", "-y", "-f", "lavfi", "-i", SFX[name], "-ar", "44100", "-ac", "2", path], outdir)
+    return path
 
-def _candidates():
-    """Models to try, in order. Asks Groq which models this key can use, so deprecations don't break the bot."""
-    available = []
-    try:
-        r = requests.get("https://api.groq.com/openai/v1/models", headers=HEADERS(), timeout=30)
-        if r.status_code == 200:
-            available = [m["id"] for m in r.json().get("data", [])]
-            print("Models available on your Groq key:", ", ".join(available))
-    except Exception as e:
-        print("Could not list Groq models:", e)
+def _ts(t):
+    h, m = int(t // 3600), int(t % 3600 // 60)
+    s = t % 60
+    return f"{h:02d}:{m:02d}:{int(s):02d},{int((s - int(s)) * 1000):03d}"
 
-    wanted = ([config.GROQ_MODEL] if config.GROQ_MODEL else []) + PREFERRED
-    if not available:
-        return wanted
-    ordered = [m for m in wanted if m in available]
-    ordered += [m for m in available if m not in ordered and not any(k in m.lower() for k in SKIP)]
-    return ordered or wanted
+def _chunks(text, max_words=6):
+    """Short punchy caption lines (max ~6 words), split at sentence ends first."""
+    out = []
+    for sen in re.split(r"(?<=[.!?।])\s+", text.strip()):
+        words = sen.split()
+        if not words:
+            continue
+        parts = -(-len(words) // max_words)
+        size = -(-len(words) // parts)
+        for i in range(0, len(words), size):
+            out.append(" ".join(words[i:i + size]))
+    return out
 
+def _srt(scenes):
+    lines, idx, offset = [], 1, 0.0
+    for sc in scenes:
+        chunks = _chunks(sc["text"])
+        total = sum(len(x) for x in chunks) or 1
+        t = offset
+        for ch in chunks:
+            d = sc["dur"] * len(ch) / total
+            lines += [str(idx), f"{_ts(t)} --> {_ts(t + d)}", ch, ""]
+            idx += 1
+            t += d
+        offset += sc["dur"] + PAD
+    return "\n".join(lines)
 
-def _call(prompt, model):
-    r = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers=HEADERS(),
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": "You are a children's story writer. Reply with valid JSON only."},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 1.0,
-            "max_completion_tokens": 9000,
-            "response_format": {"type": "json_object"},
-        },
-        timeout=180,
-    )
-    if r.status_code >= 400:
-        raise RuntimeError(f"Groq API {r.status_code}: {r.text[:300]}")
-    text = r.json()["choices"][0]["message"]["content"]
-    text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
-    return json.loads(text)
+def build(scenes, outdir, music_dir="assets/music"):
+    """scenes: list of dicts with image, audio (file names inside outdir), dur, text, motion, sfx"""
+    W, H = config.WIDTH, config.HEIGHT
+    clips = []
+    for i, sc in enumerate(scenes):
+        total = sc["dur"] + PAD
+        frames = max(int(total * FPS), 2)
+        z, x, y = _motion(sc.get("motion", "zoom_in"), frames)
+        vf = (f"[0:v]scale={W*2}:{H*2}:force_original_aspect_ratio=increase,crop={W*2}:{H*2},"
+              f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={W}x{H}:fps={FPS},format=yuv420p[v]")
+        cmd = ["ffmpeg", "-y", "-i", sc["image"], "-i", sc["audio"]]
+        sfx = sc.get("sfx", "none")
+        if sfx in SFX:
+            cmd += ["-i", _make_sfx(sfx, outdir)]
+            af = (f"[1:a]apad=pad_dur={PAD}[a0];[2:a]volume=0.6[s];"
+                  f"[a0][s]amix=inputs=2:duration=first:normalize=0[a]")
+        else:
+            af = f"[1:a]apad=pad_dur={PAD}[a]"
+        clip = f"clip{i:02d}.mp4"
+        cmd += ["-filter_complex", f"{vf};{af}", "-map", "[v]", "-map", "[a]",
+                "-t", f"{total:.2f}", "-c:v", "libx264", "-preset", "veryfast",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2", clip]
+        _run(cmd, outdir)
+        clips.append(clip)
 
+    with open(os.path.join(outdir, "list.txt"), "w") as f:
+        f.write("".join(f"file '{c}'\n" for c in clips))
+    _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "joined.mp4"], outdir)
 
-def generate_story(history_titles):
-    last = None
-    for model in _candidates():
-        print("Trying model:", model)
-        for attempt in range(2):
-            try:
-                data = _call(_prompt(history_titles), model)
-                assert data["title"] and len(data["scenes"]) >= 3
-                for s in data["scenes"]:
-                    assert s["narration"] and s["image_prompt"]
-                return data
-            except Exception as e:
-                last = e
-                print(f"  attempt {attempt+1} failed: {e}")
-                if "model_not_found" in str(e) or " 404" in str(e) or "decommissioned" in str(e):
-                    break  # try next model
-                time.sleep(5)
-    raise RuntimeError(f"Could not generate story: {last}")
+    with open(os.path.join(outdir, "captions.srt"), "w", encoding="utf-8") as f:
+        f.write(_srt(scenes))
+    size = 20 if config.FORMAT != "short" else 14
+    style = (f"FontName=Noto Sans Devanagari,Fontsize={size},Bold=1,PrimaryColour=&H0000E6FF,"
+             f"OutlineColour=&H00000000,Outline=3,Shadow=1,Alignment=2,MarginV=30")
+    _run(["ffmpeg", "-y", "-i", "joined.mp4", "-vf", f"subtitles=captions.srt:force_style='{style}'",
+          "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "copy",
+          "captioned.mp4"], outdir)
+
+    tracks = [os.path.join(music_dir, f) for f in sorted(os.listdir(music_dir))
+              if f.lower().endswith((".mp3", ".wav", ".m4a"))] if os.path.isdir(music_dir) else []
+    final = os.path.join(outdir, "final.mp4")
+    if tracks:
+        track = os.path.abspath(tracks[0])
+        _run(["ffmpeg", "-y", "-i", "captioned.mp4", "-stream_loop", "-1", "-i", track,
+              "-filter_complex", "[1:a]volume=0.07[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
+              "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-shortest", "final.mp4"], outdir)
+    else:
+        shutil.copy(os.path.join(outdir, "captioned.mp4"), final)
+
+    for c in clips:
+        os.remove(os.path.join(outdir, c))
+    return final
