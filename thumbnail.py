@@ -1,4 +1,4 @@
-import glob, textwrap
+import glob, os, textwrap
 from PIL import Image, ImageDraw, ImageFont
 
 def _font_path():
