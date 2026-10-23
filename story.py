@@ -8,23 +8,29 @@ HEADERS = lambda: {"Authorization": f"Bearer {config.GROQ_API_KEY}"}
 
 def _prompt(history_titles):
     avoid = "; ".join(history_titles[-60:]) or "none yet"
-    return f"""You write original, kid-safe stories for a YouTube channel about: {config.CHANNEL_THEME}.
-Language: {config.LANGUAGE}.
+    return f"""You write original, laugh-out-loud COMEDY cartoon stories for a YouTube channel about: {config.CHANNEL_THEME}.
+Story language: {config.LANGUAGE}. Write title, description, tags and every narration line in {config.LANGUAGE}, in natural spoken everyday language like a funny storyteller (not stiff or bookish).
 
-Write ONE brand-new story with a clear beginning, middle, end and a gentle moral.
-Do NOT reuse these earlier titles or ideas: {avoid}
+Comedy rules:
+- Open with a funny hook in the first line.
+- Build one silly problem that keeps getting worse, with escalating mishaps, misunderstandings, wordplay and funny reactions.
+- Use comic timing: setup, then punchline. Add funny sound words (धड़ाम, छपाक, etc.) and playful exaggeration.
+- Finish with a big surprise twist or punchline in the last scene.
+- Family-friendly humor only: no insults about people, religion, caste, looks or regions; no violence, nothing scary, no brands.
+
+Write ONE brand-new story. Do NOT reuse these earlier titles or ideas: {avoid}
 
 Return ONLY valid JSON (no markdown) with this exact shape:
 {{
-  "title": "catchy title under 70 characters",
-  "description": "2-3 sentence YouTube description",
-  "tags": ["10 short tags"],
-  "characters": "one-line visual description of the main characters (species, colors, clothes) used to keep art consistent",
+  "title": "catchy funny title under 70 characters, in {config.LANGUAGE}",
+  "description": "2-3 sentence funny YouTube description in {config.LANGUAGE}",
+  "tags": ["10 short search tags, mix of {config.LANGUAGE} and English"],
+  "characters": "ENGLISH ONLY: one-line visual description of the main characters (species, colors, clothes, funny trait) so the art stays consistent",
   "scenes": [
-    {{"narration": "2-3 simple sentences, about 35-50 words", "image_prompt": "what to draw in this scene, concrete and visual, no text in image"}}
+    {{"narration": "2-3 short funny sentences in {config.LANGUAGE}, about 35-50 words", "image_prompt": "ENGLISH ONLY: what to draw in this scene, concrete and visual, with a funny exaggerated expression or action, no text in image"}}
   ]
 }}
-Use exactly {config.NUM_SCENES} scenes. Keep language simple and warm. No violence, no scary content, no brands."""
+Use exactly {config.NUM_SCENES} scenes. The characters and image_prompt fields must be in English because the image model only understands English."""
 
 
 def _candidates():
