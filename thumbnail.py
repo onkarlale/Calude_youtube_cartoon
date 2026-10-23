@@ -1,15 +1,26 @@
-import textwrap
+import glob, textwrap
 from PIL import Image, ImageDraw, ImageFont
 
-FONTS = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-         "/Library/Fonts/Arial Bold.ttf", "C:/Windows/Fonts/arialbd.ttf"]
+def _font_path():
+    patterns = ["/usr/share/fonts/**/NotoSansDevanagari-Bold.ttf",
+                "/usr/share/fonts/**/NotoSansDevanagari*Bold*.ttf",
+                "/usr/share/fonts/**/NotoSansDevanagari-Regular.ttf",
+                "/usr/share/fonts/**/NotoSansDevanagari*.ttf",
+                "/usr/share/fonts/**/Lohit-Devanagari.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
+    for p in patterns:
+        found = sorted(glob.glob(p, recursive=True))
+        if found:
+            return found[0]
+    return None
 
 def _font(size):
-    for p in FONTS:
+    path = _font_path()
+    if path:
         try:
-            return ImageFont.truetype(p, size)
-        except OSError:
-            continue
+            return ImageFont.truetype(path, size, layout_engine=ImageFont.Layout.RAQM)
+        except Exception:
+            return ImageFont.truetype(path, size)
     return ImageFont.load_default()
 
 def make(first_image, title, out):
@@ -21,10 +32,10 @@ def make(first_image, title, out):
     img = img.crop((l, t, l + tw, t + th))
     d = ImageDraw.Draw(img)
     font = _font(84)
-    lines = textwrap.wrap(title, width=18)[:3]
-    y = th - 60 - len(lines) * 100
+    lines = textwrap.wrap(title, width=16)[:3]
+    y = th - 60 - len(lines) * 110
     for line in lines:
         d.text((50, y), line, font=font, fill="white", stroke_width=8, stroke_fill="black")
-        y += 100
+        y += 110
     img.save(out, "JPEG", quality=90)
     return out
