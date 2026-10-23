@@ -2,7 +2,7 @@ import os
 
 # ---- Secrets / keys (set as GitHub Actions secrets) ----
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")  # check console.groq.com/docs/models if this name changes
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "")  # optional override; empty = auto-pick a working model from your Groq account
 
 YT_CLIENT_ID = os.environ.get("YT_CLIENT_ID", "")
 YT_CLIENT_SECRET = os.environ.get("YT_CLIENT_SECRET", "")
