@@ -20,12 +20,14 @@ YT_REFRESH_TOKEN = env("YT_REFRESH_TOKEN")
 CHANNEL_THEME = env("CHANNEL_THEME", "hilarious comedy cartoon stories with silly, mischievous animal characters in funny situations")
 LANGUAGE = env("LANGUAGE", "Hindi (Devanagari script)")
 TTS_VOICE = env("TTS_VOICE", "hi-IN-SwaraNeural")   # Hindi: hi-IN-SwaraNeural (female) or hi-IN-MadhurNeural (male)
-NUM_SCENES = int(env("NUM_SCENES", "8"))
+NUM_SCENES = int(env("NUM_SCENES", "14"))   # more, shorter scenes = faster, funnier cuts
 ART_STYLE = env(
     "ART_STYLE",
     "high quality 2D cartoon illustration, clean outlines, soft shading, funny exaggerated expressions, "
     "bright vibrant colors, detailed background, consistent character design",
 )
+
+TTS_RATE = env("TTS_RATE", "+6%")   # slightly faster voice = more comic energy (e.g. "+0%", "+10%")
 
 # "long" = 1280x720 YouTube video, "short" = 720x1280 YouTube Short
 FORMAT = env("VIDEO_FORMAT", "long").lower()
