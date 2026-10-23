@@ -1,12 +1,12 @@
 import asyncio, os, subprocess, time
 
-def synth(text, path, voice, retries=4):
+def synth(text, path, voice, rate="+0%", retries=4):
     import edge_tts
     last = None
     for attempt in range(retries):
         try:
             async def _run():
-                await edge_tts.Communicate(text, voice).save(path)
+                await edge_tts.Communicate(text, voice, rate=rate).save(path)
             asyncio.run(_run())
             if os.path.getsize(path) > 1000:
                 return
