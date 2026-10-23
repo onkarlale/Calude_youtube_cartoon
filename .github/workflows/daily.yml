@@ -32,6 +32,7 @@ jobs:
           YT_CLIENT_ID: ${{ secrets.YOUR_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          GROQ_MODEL: ${{ vars.GROQ_MODEL }}
           CHANNEL_THEME: ${{ vars.CHANNEL_THEME }}
           UPLOAD_PRIVACY: ${{ vars.UPLOAD_PRIVACY }}
           VIDEO_FORMAT: ${{ vars.VIDEO_FORMAT }}
