@@ -15,7 +15,7 @@ def _ts(t):
 def _srt(scenes):
     lines, idx, offset = [], 1, 0.0
     for sc in scenes:
-        sentences = [x for x in re.split(r"(?<=[.!?])\s+", sc["text"].strip()) if x]
+        sentences = [x for x in re.split(r"(?<=[.!?।])\s+", sc["text"].strip()) if x]
         total = sum(len(x) for x in sentences) or 1
         t = offset
         for sen in sentences:
@@ -51,7 +51,7 @@ def build(scenes, outdir, music_dir="assets/music"):
     with open(os.path.join(outdir, "captions.srt"), "w", encoding="utf-8") as f:
         f.write(_srt(scenes))
     size = 16 if config.FORMAT == "long" else 11
-    style = f"FontName=DejaVu Sans,Fontsize={size},Bold=1,Outline=2,Shadow=1,Alignment=2,MarginV=28"
+    style = f"FontName=Noto Sans Devanagari,Fontsize={size},Bold=1,Outline=2,Shadow=1,Alignment=2,MarginV=28"
     _run(["ffmpeg", "-y", "-i", "joined.mp4", "-vf", f"subtitles=captions.srt:force_style='{style}'",
           "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "copy",
           "captioned.mp4"], outdir)
