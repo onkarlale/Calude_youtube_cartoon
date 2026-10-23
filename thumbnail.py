@@ -3,8 +3,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 def _font_path():
     home = os.path.expanduser("~/.fonts")
-    patterns = ["patterns = [home + "/NotoSansDevanagari*Bold*.ttf", home + "/NotoSansDevanagari*.ttf",
-                "/usr/share/fonts/**/NotoSansDevanagari-Bold.ttf",",
+    patterns = [home + "/NotoSansDevanagari*Bold*.ttf", home + "/NotoSansDevanagari*.ttf",
+                "/usr/share/fonts/**/NotoSansDevanagari-Bold.ttf",
                 "/usr/share/fonts/**/NotoSansDevanagari*Bold*.ttf",
                 "/usr/share/fonts/**/NotoSansDevanagari-Regular.ttf",
                 "/usr/share/fonts/**/NotoSansDevanagari*.ttf",
