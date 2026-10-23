@@ -17,14 +17,14 @@ YT_CLIENT_SECRET = env("YT_CLIENT_SECRET")
 YT_REFRESH_TOKEN = env("YT_REFRESH_TOKEN")
 
 # ---- Channel settings (edit these or set as repo Variables) ----
-CHANNEL_THEME = env("CHANNEL_THEME", "short moral bedtime stories for kids with cute animal characters")
-LANGUAGE = env("LANGUAGE", "English")
-TTS_VOICE = env("TTS_VOICE", "en-US-AnaNeural")   # run: edge-tts --list-voices
+CHANNEL_THEME = env("CHANNEL_THEME", "hilarious comedy cartoon stories with silly, mischievous animal characters in funny situations")
+LANGUAGE = env("LANGUAGE", "Hindi (Devanagari script)")
+TTS_VOICE = env("TTS_VOICE", "hi-IN-SwaraNeural")   # Hindi: hi-IN-SwaraNeural (female) or hi-IN-MadhurNeural (male)
 NUM_SCENES = int(env("NUM_SCENES", "8"))
 ART_STYLE = env(
     "ART_STYLE",
-    "high quality 2D cartoon illustration, clean outlines, soft shading, children's storybook style, "
-    "bright friendly colors, detailed background, consistent character design",
+    "high quality 2D cartoon illustration, clean outlines, soft shading, funny exaggerated expressions, "
+    "bright vibrant colors, detailed background, consistent character design",
 )
 
 # "long" = 1280x720 YouTube video, "short" = 720x1280 YouTube Short
