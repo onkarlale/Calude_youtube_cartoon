@@ -2,71 +2,106 @@ import os, re, subprocess, shutil
 import config
 
 FPS = 25
-PAD = 0.6  # seconds of pause after each scene
+PAD = 0.25   # short pause after each scene = snappy cuts
+
+CX = "iw/2-(iw/zoom/2)"
+CY = "ih/2-(ih/zoom/2)"
+
+def _motion(name, n):
+    """zoompan expressions (z, x, y) for each camera move. n = number of frames in the clip."""
+    n = max(n - 1, 1)
+    table = {
+        "zoom_in":   ("min(1.0+0.0012*on,1.3)", CX, CY),
+        "zoom_out":  ("max(1.3-0.0012*on,1.0)", CX, CY),
+        "pan_left":  ("1.22", f"(iw-iw/zoom)*(1-on/{n})", CY),
+        "pan_right": ("1.22", f"(iw-iw/zoom)*(on/{n})", CY),
+        "pan_up":    ("1.22", CX, f"(ih-ih/zoom)*(1-on/{n})"),
+        "pan_down":  ("1.22", CX, f"(ih-ih/zoom)*(on/{n})"),
+        # camera shake that fades out over the first ~1.2 s (crash / explosion)
+        "shake":     ("1.12+0.0005*on",
+                      f"{CX}+sin(on*2.3)*22*max(0,1-on/30)",
+                      f"{CY}+cos(on*2.9)*22*max(0,1-on/30)"),
+        # sudden snap-zoom (surprise / punchline)
+        "punch":     ("1.0+0.22*min(on/5,1)+0.0006*on", CX, CY),
+    }
+    return table[name]
+
+MOTIONS = ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "shake", "punch"]
+
+# Sound effects are synthesised with FFmpeg, so there is nothing to download and no licence to worry about.
+SFX = {
+    "whoosh": "anoisesrc=d=0.5:c=pink:a=0.5,bandpass=f=1500:w=1200,afade=t=in:d=0.25,afade=t=out:st=0.25:d=0.25",
+    "boing":  "aevalsrc=0.6*sin(2*PI*(350+300*sin(2*PI*9*t))*t)*exp(-4*t):d=0.6",
+    "crash":  "anoisesrc=d=0.8:c=brown:a=0.9,lowpass=f=3500,afade=t=out:st=0.05:d=0.75",
+    "pop":    "aevalsrc=0.7*sin(2*PI*700*t)*exp(-30*t):d=0.2",
+}
 
 def _run(cmd, cwd):
-    subprocess.run(cmd, cwd=cwd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    p = subprocess.run(cmd, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if p.returncode != 0:
+        raise RuntimeError("ffmpeg failed:\n" + p.stderr[-1500:])
+
+def _make_sfx(name, outdir):
+    path = f"sfx_{name}.wav"
+    if not os.path.exists(os.path.join(outdir, path)):
+        _run(["ffmpeg", "-y", "-f", "lavfi", "-i", SFX[name], "-ar", "44100", "-ac", "2", path], outdir)
+    return path
 
 def _ts(t):
     h, m = int(t // 3600), int(t % 3600 // 60)
     s = t % 60
     return f"{h:02d}:{m:02d}:{int(s):02d},{int((s - int(s)) * 1000):03d}"
 
+def _chunks(text, max_words=6):
+    """Short punchy caption lines (max ~6 words), split at sentence ends first."""
+    out = []
+    for sen in re.split(r"(?<=[.!?।])\s+", text.strip()):
+        words = sen.split()
+        if not words:
+            continue
+        parts = -(-len(words) // max_words)
+        size = -(-len(words) // parts)
+        for i in range(0, len(words), size):
+            out.append(" ".join(words[i:i + size]))
+    return out
+
 def _srt(scenes):
     lines, idx, offset = [], 1, 0.0
     for sc in scenes:
-        sentences = [x for x in re.split(r"(?<=[.!?।])\s+", sc["text"].strip()) if x]
-        total = sum(len(x) for x in sentences) or 1
+        chunks = _chunks(sc["text"])
+        total = sum(len(x) for x in chunks) or 1
         t = offset
-        for sen in sentences:
-            d = sc["dur"] * len(sen) / total
-            lines += [str(idx), f"{_ts(t)} --> {_ts(t + d)}", sen, ""]
+        for ch in chunks:
+            d = sc["dur"] * len(ch) / total
+            lines += [str(idx), f"{_ts(t)} --> {_ts(t + d)}", ch, ""]
             idx += 1
             t += d
         offset += sc["dur"] + PAD
     return "\n".join(lines)
 
 def build(scenes, outdir, music_dir="assets/music"):
-    """scenes: list of dicts with image, audio (file names inside outdir), dur, text"""
+    """scenes: list of dicts with image, audio (file names inside outdir), dur, text, motion, sfx"""
     W, H = config.WIDTH, config.HEIGHT
     clips = []
     for i, sc in enumerate(scenes):
-        frames = int((sc["dur"] + PAD) * FPS)
+        total = sc["dur"] + PAD
+        frames = max(int(total * FPS), 2)
+        z, x, y = _motion(sc.get("motion", "zoom_in"), frames)
+        vf = (f"[0:v]scale={W*2}:{H*2}:force_original_aspect_ratio=increase,crop={W*2}:{H*2},"
+              f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={W}x{H}:fps={FPS},format=yuv420p[v]")
+        cmd = ["ffmpeg", "-y", "-i", sc["image"], "-i", sc["audio"]]
+        sfx = sc.get("sfx", "none")
+        if sfx in SFX:
+            cmd += ["-i", _make_sfx(sfx, outdir)]
+            af = (f"[1:a]apad=pad_dur={PAD}[a0];[2:a]volume=0.6[s];"
+                  f"[a0][s]amix=inputs=2:duration=first:normalize=0[a]")
+        else:
+            af = f"[1:a]apad=pad_dur={PAD}[a]"
         clip = f"clip{i:02d}.mp4"
-        vf = (f"scale={W*2}:{H*2}:force_original_aspect_ratio=increase,crop={W*2}:{H*2},"
-              f"zoompan=z='min(zoom+0.0005,1.18)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-              f":d={frames}:s={W}x{H}:fps={FPS},format=yuv420p,"
-              f"fade=t=in:st=0:d=0.35,fade=t=out:st={sc['dur'] + PAD - 0.35:.2f}:d=0.35")
-        _run(["ffmpeg", "-y", "-i", sc["image"], "-i", sc["audio"],
-              "-vf", vf, "-af", f"apad=pad_dur={PAD}",
-              "-t", f"{sc['dur'] + PAD:.2f}",
-              "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-ar", "44100", "-ac", "2",
-              clip], outdir)
+        cmd += ["-filter_complex", f"{vf};{af}", "-map", "[v]", "-map", "[a]",
+                "-t", f"{total:.2f}", "-c:v", "libx264", "-preset", "veryfast",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2", clip]
+        _run(cmd, outdir)
         clips.append(clip)
 
-    with open(os.path.join(outdir, "list.txt"), "w") as f:
-        f.write("".join(f"file '{c}'\n" for c in clips))
-    _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "joined.mp4"], outdir)
-
-    with open(os.path.join(outdir, "captions.srt"), "w", encoding="utf-8") as f:
-        f.write(_srt(scenes))
-    size = 16 if config.FORMAT == "long" else 11
-    style = f"FontName=Noto Sans Devanagari,Fontsize={size},Bold=1,Outline=2,Shadow=1,Alignment=2,MarginV=28"
-    _run(["ffmpeg", "-y", "-i", "joined.mp4", "-vf", f"subtitles=captions.srt:force_style='{style}'",
-          "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "copy",
-          "captioned.mp4"], outdir)
-
-    tracks = [os.path.join(music_dir, f) for f in sorted(os.listdir(music_dir))
-              if f.lower().endswith((".mp3", ".wav", ".m4a"))] if os.path.isdir(music_dir) else []
-    final = os.path.join(outdir, "final.mp4")
-    if tracks:
-        track = os.path.abspath(tracks[0])
-        _run(["ffmpeg", "-y", "-i", "captioned.mp4", "-stream_loop", "-1", "-i", track,
-              "-filter_complex", "[1:a]volume=0.07[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=0[a]",
-              "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-shortest", "final.mp4"], outdir)
-    else:
-        shutil.copy(os.path.join(outdir, "captioned.mp4"), final)
-
-    for c in clips:
-        os.remove(os.path.join(outdir, c))
-    return final
+    with
