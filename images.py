@@ -4,7 +4,6 @@ import config
 
 MODEL = "@cf/black-forest-labs/flux-1-schnell"
 URL = "https://api.cloudflare.com/client/v4/accounts/{acc}/ai/run/" + MODEL
-_SEED_OK = True   # flipped off automatically if the API rejects the seed field
 
 
 def _compose(img):
@@ -24,21 +23,13 @@ def _compose(img):
 
 
 def make_image(prompt, path, seed=None):
-    global _SEED_OK
     full = f"{prompt}. {config.ART_STYLE}. wide shot, full body, centered, clean simple background, cinematic lighting. no text, no letters, no watermark, no logo"[:2000]
     url = URL.format(acc=config.CF_ACCOUNT_ID)
     headers = {"Authorization": f"Bearer {config.CF_API_TOKEN}"}
     last = "unknown"
     for attempt in range(5):
         try:
-            payload = {"prompt": full, "steps": 8}
-            if seed is not None and _SEED_OK:
-                payload["seed"] = int(seed)   # same seed in every scene = more similar look
-            r = requests.post(url, headers=headers, json=payload, timeout=180)
-            if r.status_code in (400, 422) and "seed" in payload:
-                _SEED_OK = False
-                payload.pop("seed")
-                r = requests.post(url, headers=headers, json=payload, timeout=180)
+            r = requests.post(url, headers=headers, json={"prompt": full, "steps": 8}, timeout=180)
             if r.status_code in (401, 403):
                 raise SystemExit(f"Cloudflare rejected the token/account ({r.status_code}): {r.text[:300]}\n"
                                  "Check CF_ACCOUNT_ID / CF_API_TOKEN secrets (token needs Workers AI permission).")

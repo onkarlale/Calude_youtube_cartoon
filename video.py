@@ -35,7 +35,7 @@ def build(scenes, outdir, music_dir="assets/music"):
 
     with open(os.path.join(outdir, "captions.srt"), "w", encoding="utf-8") as f:
         f.write(srt(scenes))
-    size, margin = (16, 70) if config.IS_SHORT else (20, 30)
+    size, margin = (14, 70) if config.IS_SHORT else (18, 30)
     style = (f"FontName=Noto Sans Devanagari,Fontsize={size},Bold=1,PrimaryColour=&H0000E6FF,"
              f"OutlineColour=&H00000000,Outline=3,Shadow=1,Alignment=2,MarginV={margin}")
     run(["ffmpeg", "-y", "-i", "joined.mp4", "-vf", f"subtitles=captions.srt:force_style='{style}'",

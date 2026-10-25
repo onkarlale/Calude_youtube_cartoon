@@ -36,23 +36,21 @@ def main():
     scenes = []
     print("2/5 Drawing scenes + recording voice...")
     default_moves = ["zoom_in", "pan_right", "zoom_out", "pan_left"]
+    context = " ".join(x for x in (
+        f"Setting: {data['location']}." if data.get("location") else "",
+        f"Key props: {data['props']}." if data.get("props") else "") if x)
     for i, sc in enumerate(data["scenes"]):
         img = f"scene{i:02d}.jpg"
         aud = f"scene{i:02d}.mp3"
-        key = config.speaker_key(sc.get("speaker"))
-        who_name = {"a": config.NAME_A, "b": config.NAME_B}.get(key)
-        talk = f" {who_name} is the one speaking, mouth open." if who_name else ""
-        place = f" Setting: {data['location']}." if data.get("location") else ""
-        # scene action FIRST (most important for the image model), then looks + place for consistency
-        prompt = f"{sc['image_prompt']}.{talk} Characters: {data['characters']}.{place}"
+        prompt = f"{data['characters']} {context} {sc['image_prompt']}"
         images.make_image(prompt, os.path.join(outdir, img), seed)
-        who, pitch = config.voice_for(key)
+        who, pitch = config.voice_for(sc.get("speaker", "narrator"))
         voice.synth(sc["narration"], os.path.join(outdir, aud), who, config.TTS_RATE, pitch)
         dur = voice.duration(os.path.join(outdir, aud))
         motion = sc.get("motion") if sc.get("motion") in video.MOTIONS else default_moves[i % 4]
         sfx = sc.get("sfx") if sc.get("sfx") in video.SFX else "none"
         scenes.append({"image": img, "audio": aud, "dur": dur, "text": sc["narration"],
-                       "motion": motion, "sfx": sfx})
+                       "motion": motion, "sfx": sfx, "speaker": sc.get("speaker", "narrator")})
         print(f"   scene {i+1}/{len(data['scenes'])} done ({dur:.1f}s, {motion}, sfx={sfx})")
 
     print("3/5 Rendering video...")

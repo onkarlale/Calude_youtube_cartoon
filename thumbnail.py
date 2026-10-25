@@ -1,4 +1,4 @@
-import glob, os, re, textwrap
+import glob, os, textwrap
 from PIL import Image, ImageDraw, ImageFont
 
 def _font_path():
@@ -32,7 +32,6 @@ def make(first_image, title, out):
     img = img.resize((int(img.width * scale), int(img.height * scale)))
     l, t = (img.width - tw) // 2, (img.height - th) // 2
     img = img.crop((l, t, l + tw, t + th))
-    title = re.sub(r"[\U00010000-\U0010ffff\u2600-\u27BF\ufe0f]", "", title).strip()
     d = ImageDraw.Draw(img)
     font = _font(84)
     lines = textwrap.wrap(title, width=16)[:3]

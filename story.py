@@ -1,7 +1,8 @@
 import json, re, time, requests
 import config
 from prompt import build_outline_prompt
-from prompt2 import build_script_prompt, build_polish_prompt
+from prompt2 import build_script_prompt
+from prompt3 import build_director_prompt
 
 PREFERRED = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "qwen/qwen3-32b"]
 SKIP = ("whisper", "guard", "tts", "orpheus", "compound", "playai", "embed")
@@ -58,45 +59,6 @@ def _step(fn, label, retries=2):
     raise RuntimeError(f"{label} failed: {last}")
 
 
-_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
-
-
-def _norm(t):
-    return re.sub(r"\W+", "", str(t or "")).lower()
-
-
-def _fix_ending(scenes, outline):
-    """The last scene must be exactly the viewer question that is also written in the description."""
-    q = (outline.get("comment_question") or "").strip()
-    if not q:
-        return
-    last = scenes[-1]
-    n_last, n_q = _norm(last["narration"]), _norm(q)
-    if n_q and (n_q in n_last or n_last in n_q):
-        last["narration"] = q
-    else:   # the model forgot the question scene -> add it instead of overwriting the punchline
-        scenes.append({"speaker": "narrator", "narration": q,
-                       "image_prompt": f"{config.NAME_A} and {config.NAME_B} both looking at the camera, "
-                                       "pointing at the viewer, funny faces",
-                       "motion": "punch", "sfx": "pop"})
-
-
-def _polish(scenes, outline, model):
-    """Polish jokes AND re-align every picture description with the final line. The last (question) scene is locked."""
-    body = scenes[:-1]
-    payload = [{"scene": i + 1, "speaker": s.get("speaker", "narrator"), "narration": s["narration"],
-                "image_prompt": s["image_prompt"]} for i, s in enumerate(body)]
-    res = _chat(build_polish_prompt(payload, outline), model, 0.7)["scenes"]
-    if not (_scenes_ok(res, minimum=1) and len(res) == len(body)):
-        print("  polish skipped: unexpected shape")
-        return
-    for old, new in zip(body, res):
-        old["narration"] = new["narration"]
-        ip = new["image_prompt"]
-        if not _DEVANAGARI.search(ip):          # image prompts must stay English
-            old["image_prompt"] = ip
-
-
 def generate_story(history_titles):
     last = None
     for model in _candidates():
@@ -109,15 +71,21 @@ def generate_story(history_titles):
             script = _step(lambda: _chat(build_script_prompt(outline), model, 0.9), "script")
             assert _scenes_ok(script["scenes"])
             scenes = script["scenes"]
-            print("  polishing jokes + aligning pictures...")
+            print("  checking story logic, matching pictures to lines...")
+            title, desc = outline["title"], outline["description"]
             try:
-                _polish(scenes, outline, model)
+                fixed = _chat(build_director_prompt(outline, scenes), model, 0.7)
+                new = fixed["scenes"]
+                if _scenes_ok(new) and len(new) == len(scenes):
+                    for old, nw in zip(scenes, new):
+                        old["narration"], old["image_prompt"] = nw["narration"], nw["image_prompt"]
+                    title = fixed.get("title") or title
+                    desc = fixed.get("description") or desc
             except Exception as e:
-                print("  polish skipped:", e)
-            _fix_ending(scenes, outline)
-            return {"title": outline["title"], "description": outline["description"],
-                    "tags": outline["tags"], "characters": config.MAIN_CHARACTERS,
-                    "location": outline.get("location_visual", ""),
+                print("  director pass skipped:", e)
+            return {"title": title, "description": desc, "tags": outline["tags"],
+                    "characters": config.MAIN_CHARACTERS, "location": outline.get("location", ""),
+                    "props": outline.get("props", ""),
                     "comment_question": outline.get("comment_question", ""), "scenes": scenes}
         except Exception as e:
             last = e

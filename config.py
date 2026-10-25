@@ -25,12 +25,13 @@ WIDTH, HEIGHT = (720, 1280) if IS_SHORT else (1280, 720)
 CHANNEL_THEME = env("CHANNEL_THEME", "hilarious clean comedy cartoons with relatable everyday situations, for everyone")
 LANGUAGE = env("LANGUAGE", "Hindi (Devanagari script)")
 TTS_VOICE = env("TTS_VOICE", "hi-IN-SwaraNeural")   # Hindi: hi-IN-SwaraNeural (female) or hi-IN-MadhurNeural (male)
-NUM_SCENES = int(env("NUM_SCENES", "10" if IS_SHORT else "14"))   # includes 1 final question scene; Short ~40 s
-LINE_WORDS = "6-14" if IS_SHORT else "8-22"                       # words per spoken line
+NUM_SCENES = int(env("NUM_SCENES", "8" if IS_SHORT else "14"))   # includes 1 final question scene; Short ~30 s
+LINE_WORDS = "5-12" if IS_SHORT else "8-22"                       # words per spoken line
+TITLE_CHARS = "25-45" if IS_SHORT else "35-60"
 TTS_RATE = env("TTS_RATE", "+12%" if IS_SHORT else "+6%")        # faster voice = more energy
 
 if IS_SHORT:
-    FORMAT_RULES = ("This is a YouTube SHORT (vertical, about 35-45 seconds). Scene 1 MUST be a scroll-stopping hook within "
+    FORMAT_RULES = ("This is a YouTube SHORT (vertical, about 25-32 seconds, as short and punchy as possible). Scene 1 MUST be a scroll-stopping hook within "
                     "2 seconds: an absurd claim, a shocking question or a chaotic moment, never a slow introduction. "
                     "Something new and funny happens in every scene, no filler.")
 else:
@@ -60,18 +61,9 @@ ART_STYLE = env(
 VOICE_A = env("VOICE_A", "hi-IN-MadhurNeural")   # character A: deep, slow
 VOICE_B = env("VOICE_B", "hi-IN-SwaraNeural")    # character B: squeaky (pitch-raised)
 
-def speaker_key(speaker):
-    """Normalise whatever the LLM wrote ("a", "A", "Bhola", "character b"...) to 'a', 'b' or 'narrator'."""
-    s = str(speaker or "").strip().lower()
-    if s in ("a", "character a", "speaker a", NAME_A.strip().lower()):
-        return "a"
-    if s in ("b", "character b", "speaker b", NAME_B.strip().lower()):
-        return "b"
-    return "narrator"
-
 def voice_for(speaker):
     """(voice, pitch) for narrator / character a / character b"""
-    return {"a": (VOICE_A, "-8Hz"), "b": (VOICE_B, "+35Hz")}.get(speaker_key(speaker), (TTS_VOICE, "+0Hz"))
+    return {"a": (VOICE_A, "-8Hz"), "b": (VOICE_B, "+35Hz")}.get(speaker, (TTS_VOICE, "+0Hz"))
 
 # private = safe default (also forced by YouTube until your API project passes audit)
 PRIVACY = env("UPLOAD_PRIVACY", "public")

@@ -6,6 +6,9 @@ PAD = 0.25   # short pause after each scene = snappy cuts
 CX = "iw/2-(iw/zoom/2)"
 CY = "ih/2-(ih/zoom/2)"
 
+# caption colour per speaker so viewers can tell who is talking (a = first star, b = second star)
+COLORS = {"a": "#FFC400", "b": "#6CFF6C"}
+
 MOTIONS = ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "shake", "punch"]
 
 # Sound effects are synthesised with FFmpeg: nothing to download, no licence worries.
@@ -52,8 +55,8 @@ def _ts(t):
     return f"{h:02d}:{m:02d}:{int(s):02d},{int((s - int(s)) * 1000):03d}"
 
 def chunks(text, max_words=None):
-    """Short punchy caption lines (max ~6 words), split at sentence ends first."""
-    max_words = max_words or (4 if config.IS_SHORT else 6)
+    """Caption lines, split at sentence ends (long sentences are split in two)."""
+    max_words = max_words or 12   # whole sentences: timing stays locked to the voice
     out = []
     for sen in re.split(r"(?<=[.!?।])\s+", text.strip()):
         words = sen.split()
@@ -70,10 +73,12 @@ def srt(scenes):
     for sc in scenes:
         parts = chunks(sc["text"])
         total = sum(len(x) for x in parts) or 1
+        color = COLORS.get(sc.get("speaker"))
         t = offset
         for ch in parts:
             d = sc["dur"] * len(ch) / total
-            lines += [str(idx), f"{_ts(t)} --> {_ts(t + d)}", ch, ""]
+            shown = f'<font color="{color}">{ch}</font>' if color else ch
+            lines += [str(idx), f"{_ts(t)} --> {_ts(t + d)}", shown, ""]
             idx += 1
             t += d
         offset += sc["dur"] + PAD
