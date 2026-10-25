@@ -2,7 +2,7 @@ name: Daily cartoon video
 
 on:
   schedule:
-    - cron: "30 3 * * *"   # 03:30 UTC = 09:00 IST, every day
+#    - cron: "30 3 * * *"   # 03:30 UTC = 09:00 IST, every day
   workflow_dispatch:        # lets you run it manually from the Actions tab
 
 permissions:
