@@ -1,0 +1,89 @@
+name: daily-comedy-video
+
+on:
+  schedule:
+    - cron: "30 2 * * *"      # 02:30 UTC = 08:00 IST
+  workflow_dispatch:
+    inputs:
+      smoke_test:
+        description: "Smoke test: built-in sample script, no Groq, uploads PRIVATE"
+        type: boolean
+        default: false
+      skip_lipsync:
+        description: "Skip Kaggle and build the simple fallback video"
+        type: boolean
+        default: false
+      no_upload:
+        description: "Build the video but do not upload"
+        type: boolean
+        default: false
+      privacy:
+        description: "Override privacy (leave 'config' to use config.json)"
+        type: choice
+        options: [config, private, unlisted, public]
+        default: config
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-comedy
+  cancel-in-progress: false
+
+jobs:
+  make-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: System packages (ffmpeg + Hindi/Latin fonts)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-noto-core fonts-dejavu-core
+          fc-list | grep -i -c "Devanagari" || true
+
+      - run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          GROQ_API_KEY_CLAUDE: ${{ secrets.GROQ_API_KEY_CLAUDE }}
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.smoke_test }}" = "true" ]; then ARGS="$ARGS --smoke"; fi
+          if [ "${{ inputs.skip_lipsync }}" = "true" ]; then ARGS="$ARGS --skip-lipsync"; fi
+          if [ "${{ inputs.no_upload }}" = "true" ]; then ARGS="$ARGS --no-upload"; fi
+          P="${{ inputs.privacy }}"
+          if [ -n "$P" ] && [ "$P" != "config" ]; then ARGS="$ARGS --privacy $P"; fi
+          python scripts/run_daily.py $ARGS
+
+      - name: Keep the video for 7 days (download it from the run page)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-and-script
+          path: |
+            build/final.mp4
+            build/thumb.jpg
+            build/script.json
+            build/topic.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Commit used_topics.json
+        if: success() && inputs.smoke_test != true
+        run: |
+          git config user.name "comedy-bot"
+          git config user.email "comedy-bot@users.noreply.github.com"
+          git add used_topics.json
+          git diff --cached --quiet || (git commit -m "chore: record used topic" && git push)
