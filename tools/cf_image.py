@@ -16,9 +16,9 @@ def generate(prompt, seed=None, retries=3):
     if not acc or not tok:
         sys.exit("Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN.")
     url = f"https://api.cloudflare.com/client/v4/accounts/{acc}/ai/run/{MODEL}"
+    # flux-1-schnell on Workers AI rejects extra fields such as "seed" (HTTP 400), so only send prompt + steps.
+    # Variety comes from the model's own randomness plus small prompt variations in the callers.
     body = {"prompt": prompt, "steps": 8}
-    if seed is not None:
-        body["seed"] = seed
     for i in range(retries):
         r = requests.post(url, headers={"Authorization": f"Bearer {tok}"}, json=body, timeout=120)
         if r.status_code == 200:
