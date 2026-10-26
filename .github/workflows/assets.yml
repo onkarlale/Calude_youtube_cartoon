@@ -17,13 +17,17 @@ on:
 jobs:
   make:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Install ffmpeg (only needed for the idle loop)
+        if: inputs.what == 'idle'
+        timeout-minutes: 5
+        run: |
+          which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
       - run: pip install requests Pillow
       - name: Face candidates
         if: inputs.what == 'face'
