@@ -1,0 +1,9 @@
+requests>=2.31
+feedparser>=6.0
+edge-tts>=6.1.12
+gTTS>=2.5
+Pillow>=10.0
+kaggle>=1.6
+google-api-python-client>=2.120
+google-auth>=2.28
+google-auth-httplib2>=0.2

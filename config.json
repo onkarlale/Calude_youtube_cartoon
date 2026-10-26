@@ -1,0 +1,20 @@
+{
+  "channel_name": "Raj Ka Rant",
+  "character_name": "Raj",
+  "privacy": "private",
+  "voice": {
+    "engine": "edge",
+    "name": "hi-IN-MadhurNeural",
+    "rate": {"setup": "+0%", "punch": "-6%", "aside": "+4%"},
+    "pitch": "+0Hz"
+  },
+  "timing": {"lead_ms": 1800, "tail_ms": 3500, "min_laugh_pause_ms": 1100},
+  "script": {"model": "llama-3.3-70b-versatile", "min_words": 300, "max_words": 400},
+  "kaggle": {
+    "kernel_slug": "comedy-render",
+    "assets_dataset": "comedy-assets",
+    "weights_dataset": "",
+    "timeout_minutes": 110
+  },
+  "youtube": {"category_id": "23", "made_for_kids": false, "contains_synthetic_media": true}
+}

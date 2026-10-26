@@ -1,0 +1,6 @@
+build/*
+!build/.gitkeep
+__pycache__/
+*.pyc
+.env
+kaggle.json
