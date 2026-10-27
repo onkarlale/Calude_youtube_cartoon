@@ -1,7 +1,7 @@
 {
   "channel_name": "Raj Ka Rant",
   "character_name": "Raj",
-  "privacy": "private",
+  "privacy": "public",
   "fallback_upload": false,
   "voice": {
     "engine": "edge",
