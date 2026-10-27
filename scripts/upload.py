@@ -106,6 +106,13 @@ def main():
             raise
     vid = resp["id"]
     log(f"[upload] https://youtu.be/{vid}")
+    actual = (resp.get("status") or {}).get("privacyStatus")
+    log(f"[upload] requested privacy: {privacy} | YouTube set it to: {actual}")
+    if actual and actual != privacy:
+        log("::warning::YouTube did NOT apply the requested privacy. This happens when the Google Cloud project is unverified "
+            "(YouTube locks API uploads to private until the project passes the API compliance audit). "
+            "Open YouTube Studio -> Content and set the video to Public by hand, or apply for the audit: "
+            "https://support.google.com/youtube/contact/yt_api_form")
 
     thumb = BUILD / "thumb.jpg"
     if thumb.exists():
