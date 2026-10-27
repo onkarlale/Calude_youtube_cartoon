@@ -16,6 +16,9 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from common import BUILD, ROOT, fail, load_config, log  # noqa: E402
 
 
+EXPECTED_RENDER_VERSION = 6
+
+
 def kaggle(*args):
     p = subprocess.run(["kaggle", *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     return p.returncode, p.stdout.strip()
@@ -95,6 +98,9 @@ def main():
     }
     b64 = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode()
     template = (ROOT / "kernel/render.py").read_text(encoding="utf-8")
+    if f"RENDER_VERSION = {EXPECTED_RENDER_VERSION}" not in template:
+        fail(f"kernel/render.py in your repo is OUTDATED or the wrong file (expected RENDER_VERSION = {EXPECTED_RENDER_VERSION}). "
+             "Upload kernel/render.py from the latest update zip, then run again.")
     if "__PAYLOAD_B64__" not in template or "MuseTalk" not in template:
         fail("kernel/render.py is the wrong file (it must be the Kaggle GPU script containing __PAYLOAD_B64__). "
              "Re-upload kernel/render.py from the v2 zip.")

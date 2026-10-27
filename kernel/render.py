@@ -17,6 +17,7 @@ import sys
 import time
 from pathlib import Path
 
+RENDER_VERSION = 6
 T0 = time.time()
 
 
@@ -32,6 +33,7 @@ def run(cmd, cwd=None, env=None, check=True):
     return r.returncode
 
 
+log(f"render.py version {RENDER_VERSION}")
 PAYLOAD = json.loads(base64.b64decode("__PAYLOAD_B64__"))
 SCRIPT, CFG, RUN_ID = PAYLOAD["script"], PAYLOAD["config"], PAYLOAD["run_id"]
 
@@ -162,7 +164,12 @@ def get_weights():
         "sd-vae/config.json", "sd-vae/diffusion_pytorch_model.bin",
         "whisper/config.json", "whisper/pytorch_model.bin",
     ]
-    missing = [n for n in need if not (models / n).exists() or (models / n).stat().st_size < 1000]
+    def ok(n):
+        f = models / n
+        floor = 1_000_000 if f.suffix in (".pth", ".bin") else 2   # big model files must be big, small configs just non-empty
+        return f.exists() and f.stat().st_size >= floor
+
+    missing = [n for n in need if not ok(n)]
     if missing:
         raise SystemExit(f"MuseTalk weights missing after download: {missing}")
     log("all MuseTalk weights present")
