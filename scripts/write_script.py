@@ -57,24 +57,91 @@ def groq_key():
     return k
 
 
+PREFERRED = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "moonshotai/kimi-k2-instruct-0905",
+             "qwen/qwen3-32b", "llama-3.1-8b-instant"]
+SKIP = ("whisper", "guard", "tts", "orpheus", "prompt-guard", "safeguard", "compound", "embed", "distil")
+_state = {"candidates": None, "model": None}
+
+
+def _candidates(first):
+    """Preference order: config model, known good models, then anything else Groq lists for this key."""
+    if _state["candidates"] is None:
+        listed = []
+        try:
+            r = requests.get("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {groq_key()}"}, timeout=30)
+            if r.status_code == 200:
+                listed = [m["id"] for m in r.json().get("data", []) if not any(x in m["id"].lower() for x in SKIP)]
+                log(f"[writer] models available to your key: {listed}")
+        except Exception as e:  # noqa: BLE001
+            log(f"[writer] could not list models: {e}")
+        order = [first] + PREFERRED
+        cands = [m for m in order if (not listed or m in listed)] + [m for m in listed if m not in order]
+        seen, out = set(), []
+        for m in cands + ([first] if not listed else []):
+            if m and m not in seen:
+                seen.add(m)
+                out.append(m)
+        _state["candidates"] = out
+        log(f"[writer] model order: {out}")
+    return _state["candidates"]
+
+
+def _parse_json(text):
+    text = (text or "").strip()
+    text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.M).strip()
+    try:
+        return json.loads(text)
+    except ValueError:
+        i, j = text.find("{"), text.rfind("}")
+        if i >= 0 and j > i:
+            return json.loads(text[i:j + 1])
+        raise
+
+
 def chat(model, system, user, temperature):
-    for attempt in range(4):
-        r = requests.post(
-            API,
-            headers={"Authorization": f"Bearer {groq_key()}"},
-            json={
-                "model": model,
-                "temperature": temperature,
-                "response_format": {"type": "json_object"},
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            },
-            timeout=120,
-        )
+    cands = [_state["model"]] if _state["model"] else _candidates(model)
+    ci = 0
+    use_json_mode = True
+    for attempt in range(12):
+        m = cands[min(ci, len(cands) - 1)]
+        body = {
+            "model": m,
+            "temperature": temperature,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        }
+        if use_json_mode:
+            body["response_format"] = {"type": "json_object"}
+        if "gpt-oss" in m:
+            body["reasoning_effort"] = "low"          # keep the thinking short so the joke text is not cut off
+            body["max_completion_tokens"] = 8000
+        try:
+            r = requests.post(API, headers={"Authorization": f"Bearer {groq_key()}"}, json=body, timeout=180)
+        except requests.RequestException as e:
+            log(f"[writer] network error: {e}")
+            time.sleep(5 * (attempt + 1))
+            continue
         if r.status_code == 200:
-            return json.loads(r.json()["choices"][0]["message"]["content"])
-        log(f"[writer] Groq HTTP {r.status_code}: {r.text[:200]}")
+            try:
+                out = _parse_json(r.json()["choices"][0]["message"]["content"])
+                _state["model"] = m
+                return out
+            except Exception as e:  # noqa: BLE001
+                log(f"[writer] model {m} returned unusable JSON ({e}); retrying")
+                time.sleep(3)
+                continue
+        log(f"[writer] Groq HTTP {r.status_code} on {m}: {r.text[:200]}")
+        low = r.text.lower()
+        if r.status_code in (400, 404) and ("model" in low and ("not exist" in low or "decommission" in low or "not found" in low or "access" in low)):
+            ci += 1
+            if ci >= len(cands):
+                break
+            log(f"[writer] switching model to {cands[ci]}")
+            continue
+        if r.status_code == 400 and use_json_mode and "response_format" in low:
+            use_json_mode = False
+            continue
         time.sleep(5 * (attempt + 1))
-    fail("Groq API kept failing.")
+    fail("Groq API kept failing (no usable model). Check the GROQ_API_KEY_CLAUDE secret and your Groq console.")
 
 
 def count_words(script):
