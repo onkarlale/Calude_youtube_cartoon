@@ -47,9 +47,12 @@ jobs:
           cache: pip
 
       - name: System packages (ffmpeg + Hindi/Latin fonts)
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg fonts-noto-core fonts-dejavu-core
+          sudo apt-get update -qq -o Acquire::Retries=3
+          sudo apt-get install -y -qq --no-install-recommends -o Acquire::Retries=3 ffmpeg fonts-noto-core fonts-dejavu-core
           fc-list | grep -i -c "Devanagari" || true
 
       - run: pip install -r requirements.txt
