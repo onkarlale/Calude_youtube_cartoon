@@ -40,6 +40,18 @@ JOB = Path("/tmp/job")
 JOB.mkdir(parents=True, exist_ok=True)
 (JOB / "tts_lib.py").write_text(PAYLOAD["tts_lib"], encoding="utf-8")
 
+# ------------------------------------------------------------------ 0. internet check (fail fast)
+import socket  # noqa: E402
+
+try:
+    socket.setdefaulttimeout(8)
+    socket.gethostbyname("pypi.org")
+    log("internet: OK")
+except OSError:
+    raise SystemExit(
+        "NO INTERNET in this Kaggle notebook. Verify your phone number at kaggle.com/settings "
+        "(Phone Verification), then make sure Internet is ON in the notebook's Session options, and run again.")
+
 # ------------------------------------------------------------------ 1. voice
 run([sys.executable, "-m", "pip", "install", "-q", "edge-tts", "gTTS", "uv"])
 sys.path.insert(0, str(JOB))
@@ -77,13 +89,20 @@ def setup_env():
     run(["uv", "venv", str(VENV), "--python", "3.10"])
     uvp("torch==2.0.1", "torchvision==0.15.2", "torchaudio==2.0.2", "--index-url", "https://download.pytorch.org/whl/cu118")
     uvp("-r", str(MT / "requirements.txt"))
-    uvp("setuptools<70", "wheel", "cython", "numpy<2", check=False)
-    uvp("--no-build-isolation", "chumpy", check=False)
+    uvp("pip", "setuptools<70", "wheel", "cython", "numpy<2", check=False)
     uvp("mmengine")
     uvp("--find-links", MMCV_URL, "--only-binary", "mmcv", "mmcv==2.0.1")
     uvp("mmdet==3.1.0")
-    if uvp("mmpose==1.1.0", check=False) != 0:
-        uvp("--no-build-isolation", "mmpose==1.1.0")
+    # mmpose depends on chumpy, which cannot be built here and is only used for 3D body models (not by MuseTalk).
+    # So: install mmpose without dependencies, add its real dependencies by hand, and drop in a tiny chumpy stand-in.
+    uvp("--no-deps", "mmpose==1.1.0")
+    uvp("json_tricks", "munkres", "scipy", "matplotlib", "pillow", check=False)
+    uvp("xtcocotools", check=False)
+    site = subprocess.check_output([PY, "-c", "import site; print(site.getsitepackages()[0])"], text=True).strip()
+    stub = Path(site) / "chumpy"
+    stub.mkdir(exist_ok=True)
+    (stub / "__init__.py").write_text("# stand-in: real chumpy cannot be built here and is not needed for 2D pose.\n", encoding="utf-8")
+    log(f"chumpy stand-in written to {stub}")
     uvp("gdown", "huggingface_hub[cli]", check=False)
     run([PY, "-c", "import torch, mmcv, mmpose, mmdet; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"])
 
