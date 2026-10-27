@@ -10,7 +10,7 @@
     "pitch": "+0Hz"
   },
   "timing": {"lead_ms": 1800, "tail_ms": 3500, "min_laugh_pause_ms": 1100},
-  "script": {"model": "llama-3.3-70b-versatile", "min_words": 300, "max_words": 400},
+  "script": {"model": "openai/gpt-oss-120b", "min_words": 300, "max_words": 400},
   "kaggle": {
     "kernel_slug": "comedy-render",
     "weights_dataset": "",
