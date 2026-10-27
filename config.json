@@ -2,6 +2,7 @@
   "channel_name": "Raj Ka Rant",
   "character_name": "Raj",
   "privacy": "private",
+  "fallback_upload": false,
   "voice": {
     "engine": "edge",
     "name": "hi-IN-MadhurNeural",
