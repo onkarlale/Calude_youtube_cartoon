@@ -31,6 +31,26 @@ def _face_jpeg():
     return buf.getvalue()
 
 
+def dump_kernel_log(ref, lines=70):
+    """On failure, download the kernel's own log and print its tail so the cause shows in GitHub."""
+    d = BUILD / "kernel_log"
+    shutil.rmtree(d, ignore_errors=True)
+    d.mkdir(parents=True)
+    rc, out = kaggle("kernels", "output", ref, "-p", str(d))
+    logs = list(d.glob("*.log"))
+    log(f"[kaggle] ---- kernel log tail ({'found' if logs else 'no log file; ' + out[-200:]}) ----")
+    for f in logs:
+        raw = f.read_text(encoding="utf-8", errors="replace")
+        try:
+            items = json.loads(raw)
+            text = "".join(i.get("data", "") for i in items)
+        except Exception:  # noqa: BLE001
+            text = raw
+        for ln in text.splitlines()[-lines:]:
+            log("  | " + ln[:300])
+    log("[kaggle] ---- end kernel log ----")
+
+
 def setup_auth():
     """Accept both Kaggle credential styles, whichever secret name the token was saved under."""
     key = (os.environ.get("KAGGLE_KEY") or "").strip()
@@ -74,7 +94,11 @@ def main():
         "face_b64": base64.b64encode(_face_jpeg()).decode(),
     }
     b64 = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode()
-    code = (ROOT / "kernel/render.py").read_text(encoding="utf-8").replace("__PAYLOAD_B64__", b64)
+    template = (ROOT / "kernel/render.py").read_text(encoding="utf-8")
+    if "__PAYLOAD_B64__" not in template or "MuseTalk" not in template:
+        fail("kernel/render.py is the wrong file (it must be the Kaggle GPU script containing __PAYLOAD_B64__). "
+             "Re-upload kernel/render.py from the v2 zip.")
+    code = template.replace("__PAYLOAD_B64__", b64)
     (kdir / "render.py").write_text(code, encoding="utf-8")
 
     meta = json.loads((ROOT / "kernel/kernel-metadata.template.json").read_text(encoding="utf-8"))
@@ -107,6 +131,7 @@ def main():
         terminal = any(w in low for w in ("complete", "error", "cancel"))
         if terminal and (seen_active or time.time() - started > 240):
             if "complete" not in low:
+                dump_kernel_log(ref)
                 fail(f"Kaggle kernel ended with: {out}")
             break
     else:
