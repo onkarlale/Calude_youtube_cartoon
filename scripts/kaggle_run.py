@@ -21,11 +21,21 @@ def kaggle(*args):
     return p.returncode, p.stdout.strip()
 
 
+def _face_jpeg():
+    """The comedian face as a compact JPEG (keeps the kernel source small)."""
+    import io
+    from PIL import Image
+    im = Image.open(ROOT / "assets/comedian.png").convert("RGB").resize((1280, 720))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=92)
+    return buf.getvalue()
+
+
 def main():
     cfg = load_config()
     user = os.environ.get("KAGGLE_USERNAME")
-    if not user or not os.environ.get("KAGGLE_KEY"):
-        fail("KAGGLE_USERNAME / KAGGLE_KEY are not set.")
+    if not user or not (os.environ.get("KAGGLE_KEY") or os.environ.get("KAGGLE_API_TOKEN")):
+        fail("Kaggle secrets missing: need KAGGLE_USERNAME and KAGGLE_KEY (or KAGGLE_API_TOKEN).")
     k = cfg["kaggle"]
     ref = f"{user}/{k['kernel_slug']}"
     script = json.loads((BUILD / "script.json").read_text(encoding="utf-8"))
@@ -40,6 +50,7 @@ def main():
         "config": {"voice": cfg["voice"], "timing": cfg["timing"]},
         "tts_lib": (ROOT / "scripts/tts_lib.py").read_text(encoding="utf-8"),
         "run_id": run_id,
+        "face_b64": base64.b64encode(_face_jpeg()).decode(),
     }
     b64 = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode()
     code = (ROOT / "kernel/render.py").read_text(encoding="utf-8").replace("__PAYLOAD_B64__", b64)
@@ -48,7 +59,7 @@ def main():
     meta = json.loads((ROOT / "kernel/kernel-metadata.template.json").read_text(encoding="utf-8"))
     meta["id"] = ref
     meta["title"] = k["kernel_slug"]
-    meta["dataset_sources"] = [f"{user}/{k['assets_dataset']}"]
+    meta["dataset_sources"] = []
     if k.get("weights_dataset"):
         meta["dataset_sources"].append(f"{user}/{k['weights_dataset']}")
     (kdir / "kernel-metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")

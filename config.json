@@ -12,7 +12,6 @@
   "script": {"model": "llama-3.3-70b-versatile", "min_words": 300, "max_words": 400},
   "kaggle": {
     "kernel_slug": "comedy-render",
-    "assets_dataset": "comedy-assets",
     "weights_dataset": "",
     "timeout_minutes": 110
   },

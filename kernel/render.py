@@ -52,11 +52,13 @@ TOTAL = timings["total"]
 log(f"voice ready: {TOTAL:.1f}s")
 
 # ------------------------------------------------------------------ 2. MuseTalk
-idle = glob.glob("/kaggle/input/**/base_idle.mp4", recursive=True)
-if not idle:
-    raise SystemExit("base_idle.mp4 not found in attached datasets (check dataset_sources / dataset name).")
-IDLE = idle[0]
-log(f"idle video: {IDLE}")
+# The idle loop is built right here from the face image sent inside the payload (no Kaggle dataset needed).
+(JOB / "comedian.png").write_bytes(base64.b64decode(PAYLOAD["face_b64"]))
+IDLE = str(JOB / "base_idle.mp4")
+run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "25", "-i", str(JOB / "comedian.png"),
+     "-vf", "scale=1408:792:flags=lanczos,crop=1280:720:x='64+14*sin(2*PI*t/7)':y='36+8*sin(2*PI*t/3.5)',format=yuv420p",
+     "-t", "14", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", IDLE])
+log(f"idle video built: {IDLE}")
 
 ROOTDIR = Path("/tmp/mt")
 MT = ROOTDIR / "MuseTalk"
