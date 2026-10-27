@@ -46,14 +46,19 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: System packages (ffmpeg + Hindi/Latin fonts)
-        timeout-minutes: 10
-        env:
-          DEBIAN_FRONTEND: noninteractive
+      - name: Restore cached ffmpeg + fonts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/ffbin
+            ~/.fonts
+          key: system-tools-${{ hashFiles('scripts/setup_system.sh') }}
+
+      - name: System tools (ffmpeg + Hindi font, no slow apt mirror)
+        timeout-minutes: 12
         run: |
-          sudo apt-get update -qq -o Acquire::Retries=3
-          sudo apt-get install -y -qq --no-install-recommends -o Acquire::Retries=3 ffmpeg fonts-noto-core fonts-dejavu-core
-          fc-list | grep -i -c "Devanagari" || true
+          sed -i 's/\r$//' scripts/setup_system.sh
+          bash scripts/setup_system.sh
 
       - run: pip install -r requirements.txt
 
