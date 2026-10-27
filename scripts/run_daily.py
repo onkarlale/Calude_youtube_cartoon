@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from common import BUILD, ROOT, log  # noqa: E402
+from common import BUILD, ROOT, load_config, log  # noqa: E402
 
 PY = sys.executable
 S = ROOT / "scripts"
@@ -65,6 +65,12 @@ def main():
             sys.exit("Fallback TTS failed too. Failing the run so you get a GitHub email.")
 
     # 3. edit
+    cfg = load_config()
+    if mode == "fallback" and not a.skip_lipsync and not cfg.get("fallback_upload", False):
+        log("::error::Lip-sync render failed, so NO video is uploaded (a still-photo video is not published). "
+            "Fix the Kaggle step and run again. Set fallback_upload=true in config.json to publish it anyway.")
+        step(S / "edit.py", "--mode", mode)   # still build it so you can download it from Artifacts
+        sys.exit("lip-sync failed; fallback video not uploaded")
     if step(S / "edit.py", "--mode", mode):
         sys.exit("edit stage failed")
 
