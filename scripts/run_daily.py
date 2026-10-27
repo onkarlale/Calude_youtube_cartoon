@@ -21,8 +21,9 @@ S = ROOT / "scripts"
 
 
 def step(*cmd):
+    cmd = [str(c) for c in cmd]
     log(f"\n=== {' '.join(Path(c).name if c.endswith('.py') else c for c in cmd)} ===")
-    return subprocess.run([PY, *map(str, cmd)], cwd=ROOT).returncode
+    return subprocess.run([PY, *cmd], cwd=ROOT).returncode
 
 
 def main():
