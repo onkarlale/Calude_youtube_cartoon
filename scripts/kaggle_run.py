@@ -31,8 +31,29 @@ def _face_jpeg():
     return buf.getvalue()
 
 
+def setup_auth():
+    """Accept both Kaggle credential styles, whichever secret name the token was saved under."""
+    key = (os.environ.get("KAGGLE_KEY") or "").strip()
+    tok = (os.environ.get("KAGGLE_API_TOKEN") or "").strip()
+    if not tok and key.startswith("KGAT_"):      # new-style token pasted into KAGGLE_KEY
+        tok = key
+        os.environ.pop("KAGGLE_KEY", None)
+    if tok:
+        os.environ["KAGGLE_API_TOKEN"] = tok
+        d = os.path.expanduser("~/.kaggle")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "access_token"), "w", encoding="utf-8") as f:
+            f.write(tok)
+        os.chmod(os.path.join(d, "access_token"), 0o600)
+        log("[kaggle] using new-style API token")
+    elif key:
+        log("[kaggle] using legacy KAGGLE_USERNAME + KAGGLE_KEY")
+    return bool(tok or key)
+
+
 def main():
     cfg = load_config()
+    setup_auth()
     user = os.environ.get("KAGGLE_USERNAME")
     if not user or not (os.environ.get("KAGGLE_KEY") or os.environ.get("KAGGLE_API_TOKEN")):
         fail("Kaggle secrets missing: need KAGGLE_USERNAME and KAGGLE_KEY (or KAGGLE_API_TOKEN).")
