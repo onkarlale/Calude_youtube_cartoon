@@ -108,18 +108,64 @@ def setup_env():
 
 
 def get_weights():
+    """Download every MuseTalk weight file ourselves (the repo's download_weights.sh uses tools that no longer work)."""
     models = MT / "models"
+    models.mkdir(parents=True, exist_ok=True)
     cached = [Path(p).parent for p in glob.glob("/kaggle/input/**/musetalkV15", recursive=True)]
     if cached:
         log(f"copying cached weights from {cached[0]}")
         shutil.copytree(cached[0], models, dirs_exist_ok=True)
     else:
-        env = {**os.environ, "PATH": f"{VENV}/bin:" + os.environ["PATH"]}
-        run("bash download_weights.sh", cwd=str(MT), env=env)
-    need = ["musetalkV15/unet.pth", "musetalkV15/musetalk.json", "dwpose", "face-parse-bisent", "sd-vae", "whisper"]
-    missing = [n for n in need if not (models / n).exists()]
+        run([sys.executable, "-m", "pip", "install", "-q", "huggingface_hub", "gdown"])
+        from huggingface_hub import hf_hub_download
+
+        def hf(repo, filename, sub=None):
+            target = models / sub if sub else models
+            target.mkdir(parents=True, exist_ok=True)
+            for attempt in range(3):
+                try:
+                    p = hf_hub_download(repo_id=repo, filename=filename, local_dir=str(target))
+                    log(f"downloaded {repo}/{filename} -> {p}")
+                    return
+                except Exception as e:  # noqa: BLE001
+                    log(f"download {repo}/{filename} failed (try {attempt + 1}): {e}")
+                    time.sleep(5)
+            raise SystemExit(f"Could not download {repo}/{filename}")
+
+        hf("TMElyralab/MuseTalk", "musetalkV15/unet.pth")
+        hf("TMElyralab/MuseTalk", "musetalkV15/musetalk.json")
+        hf("stabilityai/sd-vae-ft-mse", "config.json", "sd-vae")
+        hf("stabilityai/sd-vae-ft-mse", "diffusion_pytorch_model.bin", "sd-vae")
+        for f in ("config.json", "pytorch_model.bin", "preprocessor_config.json"):
+            hf("openai/whisper-tiny", f, "whisper")
+        hf("yzd-v/DWPose", "dw-ll_ucoco_384.pth", "dwpose")
+
+        fp = models / "face-parse-bisent"
+        fp.mkdir(parents=True, exist_ok=True)
+        import urllib.request
+        urllib.request.urlretrieve("https://download.pytorch.org/models/resnet18-5c106cde.pth", str(fp / "resnet18-5c106cde.pth"))
+        target = fp / "79999_iter.pth"
+        try:
+            import gdown
+            gdown.download(id="154JgKpzCPW82qINcVieuPH3fZ2e0P812", output=str(target), quiet=False)
+        except Exception as e:  # noqa: BLE001
+            log(f"gdown failed: {e}")
+        if not target.exists() or target.stat().st_size < 1_000_000:
+            log("trying Hugging Face mirror for face-parse model")
+            try:
+                hf("ManyOtherFunctions/face-parse-bisent", "79999_iter.pth", "face-parse-bisent")
+            except SystemExit:
+                pass
+    need = [
+        "musetalkV15/unet.pth", "musetalkV15/musetalk.json", "dwpose/dw-ll_ucoco_384.pth",
+        "face-parse-bisent/79999_iter.pth", "face-parse-bisent/resnet18-5c106cde.pth",
+        "sd-vae/config.json", "sd-vae/diffusion_pytorch_model.bin",
+        "whisper/config.json", "whisper/pytorch_model.bin",
+    ]
+    missing = [n for n in need if not (models / n).exists() or (models / n).stat().st_size < 1000]
     if missing:
         raise SystemExit(f"MuseTalk weights missing after download: {missing}")
+    log("all MuseTalk weights present")
 
 
 def make_chunks(max_len=36.0):
