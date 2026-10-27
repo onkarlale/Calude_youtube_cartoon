@@ -1,152 +1,155 @@
-#!/usr/bin/env python3
-"""Push the GPU render kernel to Kaggle, wait for it, download the result into build/render/.
+# Kaggle GPU kernel (script type). Runs on Kaggle, NOT on GitHub.
+#
+# 1. Hindi TTS for each segment -> voice.wav + timings.json   (tts_lib, embedded below)
+# 2. MuseTalk 1.5 lip-sync on base_idle.mp4, in ~35 s chunks   -> talking.mp4
+#
+# kaggle_run.py replaces __PAYLOAD_B64__ with the script, config and tts_lib source.
+# Everything big (venv, MuseTalk clone, weights) lives in /tmp so it is NOT downloaded as output.
+# Only these files are left in /kaggle/working: voice.wav, timings.json, talking.mp4, run_id.txt
 
-Needs env KAGGLE_USERNAME and KAGGLE_KEY (GitHub secrets). Exit code != 0 means: use the fallback.
-"""
 import base64
+import glob
 import json
 import os
 import shutil
 import subprocess
 import sys
 import time
-import uuid
+from pathlib import Path
 
-sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from common import BUILD, ROOT, fail, load_config, log  # noqa: E402
-
-
-def kaggle(*args):
-    p = subprocess.run(["kaggle", *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    return p.returncode, p.stdout.strip()
+T0 = time.time()
 
 
-def _face_jpeg():
-    """The comedian face as a compact JPEG (keeps the kernel source small)."""
-    import io
-    from PIL import Image
-    im = Image.open(ROOT / "assets/comedian.png").convert("RGB").resize((1280, 720))
-    buf = io.BytesIO()
-    im.save(buf, "JPEG", quality=92)
-    return buf.getvalue()
+def log(m):
+    print(f"[{time.time() - T0:6.0f}s] {m}", flush=True)
 
 
-def dump_kernel_log(ref, lines=70):
-    """On failure, download the kernel's own log and print its tail so the cause shows in GitHub."""
-    d = BUILD / "kernel_log"
-    shutil.rmtree(d, ignore_errors=True)
-    d.mkdir(parents=True)
-    rc, out = kaggle("kernels", "output", ref, "-p", str(d))
-    logs = list(d.glob("*.log"))
-    log(f"[kaggle] ---- kernel log tail ({'found' if logs else 'no log file; ' + out[-200:]}) ----")
-    for f in logs:
-        raw = f.read_text(encoding="utf-8", errors="replace")
-        try:
-            items = json.loads(raw)
-            text = "".join(i.get("data", "") for i in items)
-        except Exception:  # noqa: BLE001
-            text = raw
-        for ln in text.splitlines()[-lines:]:
-            log("  | " + ln[:300])
-    log("[kaggle] ---- end kernel log ----")
+def run(cmd, cwd=None, env=None, check=True):
+    log("$ " + (cmd if isinstance(cmd, str) else " ".join(map(str, cmd))))
+    r = subprocess.run(cmd, cwd=cwd, env=env, shell=isinstance(cmd, str))
+    if check and r.returncode != 0:
+        raise SystemExit(f"COMMAND FAILED ({r.returncode}): {cmd}")
+    return r.returncode
 
 
-def setup_auth():
-    """Accept both Kaggle credential styles, whichever secret name the token was saved under."""
-    key = (os.environ.get("KAGGLE_KEY") or "").strip()
-    tok = (os.environ.get("KAGGLE_API_TOKEN") or "").strip()
-    if not tok and key.startswith("KGAT_"):      # new-style token pasted into KAGGLE_KEY
-        tok = key
-        os.environ.pop("KAGGLE_KEY", None)
-    if tok:
-        os.environ["KAGGLE_API_TOKEN"] = tok
-        d = os.path.expanduser("~/.kaggle")
-        os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, "access_token"), "w", encoding="utf-8") as f:
-            f.write(tok)
-        os.chmod(os.path.join(d, "access_token"), 0o600)
-        log("[kaggle] using new-style API token")
-    elif key:
-        log("[kaggle] using legacy KAGGLE_USERNAME + KAGGLE_KEY")
-    return bool(tok or key)
+PAYLOAD = json.loads(base64.b64decode("__PAYLOAD_B64__"))
+SCRIPT, CFG, RUN_ID = PAYLOAD["script"], PAYLOAD["config"], PAYLOAD["run_id"]
+
+WORK = Path("/kaggle/working")
+JOB = Path("/tmp/job")
+JOB.mkdir(parents=True, exist_ok=True)
+(JOB / "tts_lib.py").write_text(PAYLOAD["tts_lib"], encoding="utf-8")
+
+# ------------------------------------------------------------------ 1. voice
+run([sys.executable, "-m", "pip", "install", "-q", "edge-tts", "gTTS", "uv"])
+sys.path.insert(0, str(JOB))
+import tts_lib  # noqa: E402
+
+timings = tts_lib.synthesize(SCRIPT, JOB / "tts", CFG)
+shutil.copy(JOB / "tts" / "voice.wav", WORK / "voice.wav")
+shutil.copy(JOB / "tts" / "timings.json", WORK / "timings.json")
+TOTAL = timings["total"]
+log(f"voice ready: {TOTAL:.1f}s")
+
+# ------------------------------------------------------------------ 2. MuseTalk
+# The idle loop is built right here from the face image sent inside the payload (no Kaggle dataset needed).
+(JOB / "comedian.png").write_bytes(base64.b64decode(PAYLOAD["face_b64"]))
+IDLE = str(JOB / "base_idle.mp4")
+run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "25", "-i", str(JOB / "comedian.png"),
+     "-vf", "scale=1408:792:flags=lanczos,crop=1280:720:x='64+14*sin(2*PI*t/7)':y='36+8*sin(2*PI*t/3.5)',format=yuv420p",
+     "-t", "14", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", IDLE])
+log(f"idle video built: {IDLE}")
+
+ROOTDIR = Path("/tmp/mt")
+MT = ROOTDIR / "MuseTalk"
+VENV = ROOTDIR / "venv"
+PY = str(VENV / "bin" / "python")
+MMCV_URL = "https://download.openmmlab.com/mmcv/dist/cu118/torch2.0.0/index.html"
 
 
-def main():
-    cfg = load_config()
-    setup_auth()
-    user = os.environ.get("KAGGLE_USERNAME")
-    if not user or not (os.environ.get("KAGGLE_KEY") or os.environ.get("KAGGLE_API_TOKEN")):
-        fail("Kaggle secrets missing: need KAGGLE_USERNAME and KAGGLE_KEY (or KAGGLE_API_TOKEN).")
-    k = cfg["kaggle"]
-    ref = f"{user}/{k['kernel_slug']}"
-    script = json.loads((BUILD / "script.json").read_text(encoding="utf-8"))
-    run_id = uuid.uuid4().hex
+def uvp(*args, check=True):
+    return run(["uv", "pip", "install", "--python", PY, *args], check=check)
 
-    # ---- build kernel folder
-    kdir = BUILD / "kernel"
-    shutil.rmtree(kdir, ignore_errors=True)
-    kdir.mkdir(parents=True)
-    payload = {
-        "script": script,
-        "config": {"voice": cfg["voice"], "timing": cfg["timing"]},
-        "tts_lib": (ROOT / "scripts/tts_lib.py").read_text(encoding="utf-8"),
-        "run_id": run_id,
-        "face_b64": base64.b64encode(_face_jpeg()).decode(),
-    }
-    b64 = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode()
-    code = (ROOT / "kernel/render.py").read_text(encoding="utf-8").replace("__PAYLOAD_B64__", b64)
-    (kdir / "render.py").write_text(code, encoding="utf-8")
 
-    meta = json.loads((ROOT / "kernel/kernel-metadata.template.json").read_text(encoding="utf-8"))
-    meta["id"] = ref
-    meta["title"] = k["kernel_slug"]
-    meta["dataset_sources"] = []
-    if k.get("weights_dataset"):
-        meta["dataset_sources"].append(f"{user}/{k['weights_dataset']}")
-    (kdir / "kernel-metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+def setup_env():
+    ROOTDIR.mkdir(parents=True, exist_ok=True)
+    run(["git", "clone", "--depth", "1", "https://github.com/TMElyralab/MuseTalk.git", str(MT)])
+    run(["uv", "venv", str(VENV), "--python", "3.10"])
+    uvp("torch==2.0.1", "torchvision==0.15.2", "torchaudio==2.0.2", "--index-url", "https://download.pytorch.org/whl/cu118")
+    uvp("-r", str(MT / "requirements.txt"))
+    uvp("setuptools<70", "wheel", "cython", "numpy<2", check=False)
+    uvp("--no-build-isolation", "chumpy", check=False)
+    uvp("mmengine")
+    uvp("--find-links", MMCV_URL, "--only-binary", "mmcv", "mmcv==2.0.1")
+    uvp("mmdet==3.1.0")
+    if uvp("mmpose==1.1.0", check=False) != 0:
+        uvp("--no-build-isolation", "mmpose==1.1.0")
+    uvp("gdown", "huggingface_hub[cli]", check=False)
+    run([PY, "-c", "import torch, mmcv, mmpose, mmdet; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"])
 
-    # ---- push
-    log(f"[kaggle] pushing {ref} (run {run_id[:8]})")
-    rc, out = kaggle("kernels", "push", "-p", str(kdir))
-    log(out)
-    if rc != 0 or "error" in out.lower() and "successfully" not in out.lower():
-        fail("kaggle kernels push failed (quota, dataset name, or credentials?)")
 
-    # ---- poll
-    deadline = time.time() + k["timeout_minutes"] * 60
-    started, seen_active, last = time.time(), False, ""
-    while time.time() < deadline:
-        time.sleep(30)
-        rc, out = kaggle("kernels", "status", ref)
-        low = out.lower()
-        if out != last:
-            log(f"[kaggle] {out}")
-            last = out
-        if "running" in low or "queued" in low:
-            seen_active = True
-        terminal = any(w in low for w in ("complete", "error", "cancel"))
-        if terminal and (seen_active or time.time() - started > 240):
-            if "complete" not in low:
-                dump_kernel_log(ref)
-                fail(f"Kaggle kernel ended with: {out}")
-            break
+def get_weights():
+    models = MT / "models"
+    cached = [Path(p).parent for p in glob.glob("/kaggle/input/**/musetalkV15", recursive=True)]
+    if cached:
+        log(f"copying cached weights from {cached[0]}")
+        shutil.copytree(cached[0], models, dirs_exist_ok=True)
     else:
-        fail("Timed out waiting for the Kaggle kernel.")
-
-    # ---- download and verify it is THIS run's output
-    out_dir = BUILD / "render"
-    for attempt in range(4):
-        shutil.rmtree(out_dir, ignore_errors=True)
-        out_dir.mkdir(parents=True)
-        rc, out = kaggle("kernels", "output", ref, "-p", str(out_dir))
-        rid = out_dir / "run_id.txt"
-        if rid.exists() and rid.read_text().strip() == run_id and (out_dir / "talking.mp4").exists():
-            log("[kaggle] output downloaded and verified")
-            return
-        log(f"[kaggle] output not ready/stale (attempt {attempt + 1}); retrying in 60s\n{out[-300:]}")
-        time.sleep(60)
-    fail("Could not download a valid output from Kaggle.")
+        env = {**os.environ, "PATH": f"{VENV}/bin:" + os.environ["PATH"]}
+        run("bash download_weights.sh", cwd=str(MT), env=env)
+    need = ["musetalkV15/unet.pth", "musetalkV15/musetalk.json", "dwpose", "face-parse-bisent", "sd-vae", "whisper"]
+    missing = [n for n in need if not (models / n).exists()]
+    if missing:
+        raise SystemExit(f"MuseTalk weights missing after download: {missing}")
 
 
-if __name__ == "__main__":
-    main()
+def make_chunks(max_len=36.0):
+    """Greedy chunks on segment boundaries so every chunk is <= max_len seconds."""
+    edges = [round(s["end"] + s["pause"], 3) for s in timings["segments"]]
+    chunks, start, last_ok = [], 0.0, 0.0
+    for e in edges:
+        if e - start > max_len and last_ok > start:
+            chunks.append((start, last_ok))
+            start = last_ok
+        last_ok = e
+    chunks.append((start, TOTAL))  # last chunk also carries the tail silence
+    return chunks
+
+
+setup_env()
+get_weights()
+
+CH = JOB / "chunks"
+CH.mkdir(exist_ok=True)
+chunks = make_chunks()
+log(f"{len(chunks)} chunks: " + ", ".join(f"{a:.0f}-{b:.0f}s" for a, b in chunks))
+yaml_lines = []
+for i, (a, b) in enumerate(chunks):
+    wav = CH / f"chunk{i:03d}.wav"
+    run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(WORK / "voice.wav"),
+         "-ar", "16000", "-ac", "1", str(wav)])
+    yaml_lines.append(f'task_{i}:\n  video_path: "{IDLE}"\n  audio_path: "{wav}"\n')
+yaml_path = JOB / "tasks.yaml"
+yaml_path.write_text("\n".join(yaml_lines), encoding="utf-8")
+
+env = {**os.environ, "PATH": f"{VENV}/bin:" + os.environ["PATH"], "PYTHONPATH": str(MT)}
+RES = JOB / "result"
+run([PY, "-m", "scripts.inference", "--inference_config", str(yaml_path), "--result_dir", str(RES),
+     "--unet_model_path", "models/musetalkV15/unet.pth", "--unet_config", "models/musetalkV15/musetalk.json",
+     "--version", "v15", "--fps", "25", "--batch_size", "8", "--use_float16"], cwd=str(MT), env=env)
+
+parts = []
+for i, (a, b) in enumerate(chunks):
+    found = [p for p in glob.glob(str(RES / "**" / f"*chunk{i:03d}*.mp4"), recursive=True) if "temp" not in Path(p).name]
+    if not found:
+        raise SystemExit(f"MuseTalk produced no output for chunk {i}")
+    part = JOB / f"part{i:03d}.mp4"
+    run(["ffmpeg", "-y", "-loglevel", "error", "-i", found[0], "-t", f"{b - a:.3f}", "-an",
+         "-vf", "fps=25,scale=1280:720", "-c:v", "libx264", "-crf", "17", "-preset", "fast", "-pix_fmt", "yuv420p", str(part)])
+    parts.append(part)
+
+lst = JOB / "concat.txt"
+lst.write_text("".join(f"file '{p}'\n" for p in parts), encoding="utf-8")
+run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(WORK / "talking.mp4")])
+(WORK / "run_id.txt").write_text(RUN_ID, encoding="utf-8")
+log("DONE. talking.mp4 written.")
