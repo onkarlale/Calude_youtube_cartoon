@@ -23,8 +23,18 @@ MIN_CUTAWAYS = 8
 
 
 def detector():
-    import cv2
-    return cv2, cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    """Return (cv2, face_detector) or (None, None) if OpenCV is unusable (then we pick without checking)."""
+    try:
+        import cv2
+        print(f"[bootstrap] cv2 from {getattr(cv2, '__file__', '?')} version {getattr(cv2, '__version__', '?')}", flush=True)
+        path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        det = cv2.CascadeClassifier(path)
+        if det.empty():
+            raise RuntimeError("cascade file empty")
+        return cv2, det
+    except Exception as e:  # noqa: BLE001
+        print(f"[bootstrap] WARNING: OpenCV face check unavailable ({e}). Picking images without face check.", flush=True)
+        return None, None
 
 
 def face_score(im, cv2, det):
@@ -45,12 +55,17 @@ def face_score(im, cv2, det):
 def make_face(tries=24):
     cv2, det = detector()
     best, best_s = None, -1
+    if cv2 is None:
+        tries = 6
     for i in range(tries):
         print(f"[bootstrap] face candidate {i + 1}/{tries}", flush=True)
         im = cf_image.generate(gf.PROMPT)
         if im is None:
             continue
         im = cf_image.crop_169(im, 1280, 720, y_frac=0.12)
+        if cv2 is None:
+            best, best_s = im, 0
+            break
         s = face_score(im, cv2, det)
         print(f"[bootstrap]   score {s:.3f}", flush=True)
         if s > best_s:
@@ -77,8 +92,10 @@ def make_cutaways(target=10):
         if im is None:
             continue
         im = cf_image.crop_169(im, 1920, 1080, y_frac=0.5)
-        g = cv2.cvtColor(np.array(im), cv2.COLOR_RGB2GRAY)
-        big = [f for f in det.detectMultiScale(g, 1.1, 6, minSize=(60, 60)) if f[2] > 0.06 * 1920]
+        big = []
+        if cv2 is not None:
+            g = cv2.cvtColor(np.array(im), cv2.COLOR_RGB2GRAY)
+            big = [f for f in det.detectMultiScale(g, 1.1, 6, minSize=(60, 60)) if f[2] > 0.06 * 1920]
         if big:
             print("[bootstrap] cutaway rejected (large visible face)", flush=True)
             continue
