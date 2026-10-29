@@ -13,10 +13,10 @@ import time
 import uuid
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from common import BUILD, ROOT, fail, load_config, log  # noqa: E402
+from common import BUILD, ROOT, fail, load_config, log, sh  # noqa: E402
 
 
-EXPECTED_RENDER_VERSION = 6
+EXPECTED_RENDER_VERSION = 7
 
 
 def kaggle(*args):
@@ -24,54 +24,69 @@ def kaggle(*args):
     return p.returncode, p.stdout.strip()
 
 
-def _face_jpeg():
-    """The comedian face as a compact JPEG (keeps the kernel source small)."""
+IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
+VID_EXT = (".mp4", ".mov", ".webm", ".mkv", ".m4v")
+
+
+def _image_jpeg(path):
+    """A face image as a compact 1280x720 JPEG (keeps the kernel source small)."""
     import io
     from PIL import Image
-    im = Image.open(ROOT / "assets/comedian.png").convert("RGB").resize((1280, 720))
+    im = Image.open(path).convert("RGB")
+    scale = max(1280 / im.width, 720 / im.height)
+    im = im.resize((max(1280, int(im.width * scale)), max(720, int(im.height * scale))), Image.LANCZOS)
+    left, top = (im.width - 1280) // 2, (im.height - 720) // 2
+    im = im.crop((left, top, left + 1280, top + 720))
     buf = io.BytesIO()
     im.save(buf, "JPEG", quality=92)
     return buf.getvalue()
 
 
-def dump_kernel_log(ref, lines=70):
-    """On failure, download the kernel's own log and print its tail so the cause shows in GitHub."""
-    d = BUILD / "kernel_log"
-    shutil.rmtree(d, ignore_errors=True)
-    d.mkdir(parents=True)
-    rc, out = kaggle("kernels", "output", ref, "-p", str(d))
-    logs = list(d.glob("*.log"))
-    log(f"[kaggle] ---- kernel log tail ({'found' if logs else 'no log file; ' + out[-200:]}) ----")
-    for f in logs:
-        raw = f.read_text(encoding="utf-8", errors="replace")
-        try:
-            items = json.loads(raw)
-            text = "".join(i.get("data", "") for i in items)
-        except Exception:  # noqa: BLE001
-            text = raw
-        for ln in text.splitlines()[-lines:]:
-            log("  | " + ln[:300])
-    log("[kaggle] ---- end kernel log ----")
+def _prep_video(path):
+    """Shrink a base video (<= ~1.5 MB, <= 12 s, no audio) so it can travel inside the kernel script."""
+    out = BUILD / "base_small.mp4"
+    for crf, dur, w, h in ((27, 12, 1280, 720), (31, 10, 1280, 720), (35, 8, 1280, 720), (33, 8, 960, 540)):
+        rc = sh(["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-t", str(dur), "-an", "-vf",
+                 f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps=25",
+                 "-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast", "-pix_fmt", "yuv420p", str(out)], check=False)
+        if out.exists() and out.stat().st_size <= 1_500_000:
+            return out.read_bytes()
+    return None
 
 
-def setup_auth():
-    """Accept both Kaggle credential styles, whichever secret name the token was saved under."""
-    key = (os.environ.get("KAGGLE_KEY") or "").strip()
-    tok = (os.environ.get("KAGGLE_API_TOKEN") or "").strip()
-    if not tok and key.startswith("KGAT_"):      # new-style token pasted into KAGGLE_KEY
-        tok = key
-        os.environ.pop("KAGGLE_KEY", None)
-    if tok:
-        os.environ["KAGGLE_API_TOKEN"] = tok
-        d = os.path.expanduser("~/.kaggle")
-        os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, "access_token"), "w", encoding="utf-8") as f:
-            f.write(tok)
-        os.chmod(os.path.join(d, "access_token"), 0o600)
-        log("[kaggle] using new-style API token")
-    elif key:
-        log("[kaggle] using legacy KAGGLE_USERNAME + KAGGLE_KEY")
-    return bool(tok or key)
+def episode_number():
+    try:
+        return len(json.loads((ROOT / "used_topics.json").read_text(encoding="utf-8")))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def pick_base(cfg):
+    """Choose today's base: rotates through assets/base_videos/*, assets/faces/* and assets/comedian.png."""
+    vis = cfg.get("visuals", {})
+    main = ROOT / "assets/comedian.png"
+    faces = ([main] if main.exists() else []) + sorted(
+        p for p in (ROOT / "assets/faces").glob("*") if p.suffix.lower() in IMG_EXT)
+    vids = sorted(p for p in (ROOT / "assets/base_videos").glob("*") if p.suffix.lower() in VID_EXT)
+    if vis.get("base_mode", "rotate") == "single" or (not vids and len(faces) <= 1):
+        pool = [("image", main)] if main.exists() else [("image", faces[0])] if faces else []
+    else:
+        pool = [("video", p) for p in vids] + [("image", p) for p in faces]
+    if not pool:
+        fail("No comedian image found: assets/comedian.png is missing.")
+    n = episode_number()
+    for off in range(len(pool)):
+        kind, p = pool[(n + off) % len(pool)]
+        if kind == "video":
+            data = _prep_video(p)
+            if data is None:
+                log(f"[kaggle] video {p.name} could not be shrunk under 1.5 MB (use a shorter, steadier clip of about 8 s); trying the next base")
+                continue
+            log(f"[kaggle] today's base: VIDEO {p.name} ({len(data) // 1024} KB) [{(n + off) % len(pool) + 1}/{len(pool)}]")
+            return "video", data
+        log(f"[kaggle] today's base: IMAGE {p.name} [{(n + off) % len(pool) + 1}/{len(pool)}]")
+        return "image", _image_jpeg(p)
+    fail("No usable base image or video.")
 
 
 def main():
@@ -94,8 +109,9 @@ def main():
         "config": {"voice": cfg["voice"], "timing": cfg["timing"]},
         "tts_lib": (ROOT / "scripts/tts_lib.py").read_text(encoding="utf-8"),
         "run_id": run_id,
-        "face_b64": base64.b64encode(_face_jpeg()).decode(),
     }
+    base_kind, base_bytes = pick_base(cfg)
+    payload["base_kind"] = base_kind
     b64 = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode()
     template = (ROOT / "kernel/render.py").read_text(encoding="utf-8")
     if f"RENDER_VERSION = {EXPECTED_RENDER_VERSION}" not in template:
@@ -104,7 +120,7 @@ def main():
     if "__PAYLOAD_B64__" not in template or "MuseTalk" not in template:
         fail("kernel/render.py is the wrong file (it must be the Kaggle GPU script containing __PAYLOAD_B64__). "
              "Re-upload kernel/render.py from the v2 zip.")
-    code = template.replace("__PAYLOAD_B64__", b64)
+    code = template.replace("__PAYLOAD_B64__", b64).replace("__BASE_B64__", base64.b64encode(base_bytes).decode())
     (kdir / "render.py").write_text(code, encoding="utf-8")
 
     meta = json.loads((ROOT / "kernel/kernel-metadata.template.json").read_text(encoding="utf-8"))

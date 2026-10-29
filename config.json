@@ -3,6 +3,13 @@
   "character_name": "Raj",
   "privacy": "public",
   "fallback_upload": false,
+  "visuals": {
+    "base_mode": "rotate",
+    "face_pool": 6,
+    "camera_cuts": true,
+    "face_x": 0.5,
+    "face_y": 0.42
+  },
   "voice": {
     "engine": "edge",
     "name": "hi-IN-MadhurNeural",

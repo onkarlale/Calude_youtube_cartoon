@@ -172,6 +172,73 @@ def prepare_cutaways(timings, seed):
     return out
 
 
+# ---------------------------------------------------------------- camera cuts
+def detect_face_center(video, cfg):
+    """Face centre (fx, fy as 0..1) for framing close-ups. Uses OpenCV if it works, else the config default."""
+    vis = cfg.get("visuals", {})
+    fx, fy = float(vis.get("face_x", 0.5)), float(vis.get("face_y", 0.42))
+    try:
+        import cv2
+        frame = BUILD / "face_probe.png"
+        sh(["ffmpeg", "-y", "-ss", "1.0", "-i", str(video), "-frames:v", "1", str(frame)])
+        img = cv2.imread(str(frame))
+        det = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        faces = det.detectMultiScale(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 1.1, 6, minSize=(80, 80))
+        if len(faces) == 1:
+            x, y, w, h = faces[0]
+            H0, W0 = img.shape[:2]
+            fx, fy = (x + w / 2) / W0, (y + h / 2) / H0
+            log(f"[edit] face found at ({fx:.2f}, {fy:.2f})")
+    except Exception as e:  # noqa: BLE001
+        log(f"[edit] face detection unavailable ({type(e).__name__}); using config framing ({fx}, {fy})")
+    return min(max(fx, 0.3), 0.7), min(max(fy, 0.3), 0.6)
+
+
+# name -> (zoom, horizontal offset)  offset moves the framing a little left/right of the face
+SHOTS = {"wide": (1.00, 0.0), "medium": (1.22, 0.0), "medium_l": (1.25, -0.05), "medium_r": (1.25, 0.05), "close": (1.50, 0.0)}
+
+
+def plan_shots(timings, seed, min_len=3.6):
+    """Cut points at segment starts. Punchlines get a close-up, set-ups alternate between wide and medium shots."""
+    rnd = random.Random(seed)
+    shots, last_cut, prev = [], -99.0, None
+    setups = ["wide", "medium", "medium_l", "medium_r"]
+    for k, seg in enumerate(timings["segments"]):
+        t = 0.0 if k == 0 else seg["start"]
+        if k and t - last_cut < min_len:
+            continue
+        if seg.get("laugh"):
+            name = "close"
+        else:
+            name = rnd.choice([n for n in setups if n != prev] or setups)
+        if name == prev:
+            continue
+        shots.append((t, name))
+        prev, last_cut = name, t
+    if not shots:
+        shots = [(0.0, "wide")]
+    shots[0] = (0.0, "wide")          # the channel title appears over the first seconds, so start wide
+    return shots
+
+
+def camera_chain(shots, fx, fy):
+    """filter_complex pieces: split the talking head and re-frame each shot (single resample, then concat)."""
+    n = len(shots)
+    parts = [f"[0:v]fps={FPS},setsar=1,tpad=stop_mode=clone:stop_duration=8,format=yuv420p,"
+             f"split={n}" + "".join(f"[b{i}]" for i in range(n))]
+    for i, (t0, name) in enumerate(shots):
+        z, dx = SHOTS[name]
+        end = f":end={shots[i + 1][0]:.3f}" if i + 1 < n else ""
+        cx = min(max(fx + dx, 0.5 / z), 1 - 0.5 / z)
+        cy = min(max(fy, 0.5 / z), 1 - 0.5 / z)
+        parts.append(
+            f"[b{i}]trim=start={t0:.3f}{end},setpts=PTS-STARTPTS,"
+            f"crop=w='trunc(iw/{z}/2)*2':h='trunc(ih/{z}/2)*2':x='clip(iw*{cx:.4f}-ow/2,0,iw-ow)':y='clip(ih*{cy:.4f}-oh/2,0,ih-oh)',"
+            f"scale={W}:{H}:flags=lanczos,setsar=1,format=yuv420p[c{i}]")
+    parts.append("".join(f"[c{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[v0]")
+    return parts
+
+
 # ---------------------------------------------------------------- thumbnail
 def make_thumbnail(final, script, out):
     from PIL import Image, ImageDraw, ImageFont
@@ -231,8 +298,14 @@ def main():
         if not talking.exists():
             fail("talking.mp4 missing (lip-sync render did not produce it)")
         in_main = ["-i", str(talking)]
-        chain = [f"[0:v]scale={W}:{H}:flags=lanczos,setsar=1,fps={FPS},"
-                 f"tpad=stop_mode=clone:stop_duration=8,format=yuv420p[v0]"]
+        if cfg.get("visuals", {}).get("camera_cuts", True):
+            fx, fy = detect_face_center(talking, cfg)
+            shots = plan_shots(timings, seed)
+            log(f"[edit] camera plan: {[(round(t, 1), n) for t, n in shots]}")
+            chain = camera_chain(shots, fx, fy)
+        else:
+            chain = [f"[0:v]scale={W}:{H}:flags=lanczos,setsar=1,fps={FPS},"
+                     f"tpad=stop_mode=clone:stop_duration=8,format=yuv420p[v0]"]
     else:
         face = ROOT / "assets/comedian.png"
         if not face.exists():

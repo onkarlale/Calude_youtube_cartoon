@@ -106,6 +106,47 @@ def make_cutaways(target=10):
         print("[bootstrap] WARNING: fewer than 3 cutaways; video will use fewer cutaways.", flush=True)
 
 
+LOOKS = [
+    ("a navy blue casual blazer over a white t-shirt", "dark blue curtain backdrop with a warm spotlight"),
+    ("a maroon hoodie", "red brick wall with warm string lights"),
+    ("a grey checked shirt over a black t-shirt", "dark stage with a soft neon sign glow"),
+    ("a black polo t-shirt", "warm wooden panelled wall of a comedy club"),
+    ("an olive green overshirt over a white t-shirt", "teal wall with a bright stage spotlight"),
+    ("a denim jacket over a plain t-shirt", "brick wall with a vintage microphone stand beside him"),
+    ("a mustard yellow shirt", "dark purple curtain with a spotlight"),
+]
+
+
+def make_face_pool(target):
+    """Extra faces (different outfits/backgrounds) so each episode can use a different base picture."""
+    import json
+    faces_dir = ROOT / "assets" / "faces"
+    faces_dir.mkdir(parents=True, exist_ok=True)
+    have = len(list(faces_dir.glob("*.png"))) + (1 if FACE.exists() else 0)
+    need = target - have
+    if need <= 0:
+        print(f"[bootstrap] face pool ok ({have} faces)", flush=True)
+        return
+    cv2, det = detector()
+    made, attempts = 0, 0
+    idx = len(list(faces_dir.glob("*.png")))
+    while made < need and attempts < need * 4:
+        outfit, backdrop = LOOKS[(idx + attempts) % len(LOOKS)]
+        attempts += 1
+        prompt = gf.PROMPT.replace("checked flannel shirt over a plain t-shirt", outfit).replace(
+            "red brick wall behind him", backdrop + " behind him")
+        im = cf_image.generate(prompt)
+        if im is None:
+            continue
+        im = cf_image.crop_169(im, 1280, 720, y_frac=0.12)
+        if cv2 is not None and face_score(im, cv2, det) < 0:
+            print("[bootstrap] face rejected (no clear single frontal face)", flush=True)
+            continue
+        im.save(faces_dir / f"face_{idx + made + 1:02d}.png")
+        made += 1
+        print(f"[bootstrap] extra face {made}/{need}", flush=True)
+
+
 def main():
     if os.environ.get("FORCE_FACE") == "1" and FACE.exists():
         FACE.unlink()
@@ -113,6 +154,13 @@ def main():
         make_face()
     else:
         print("[bootstrap] face exists, skipping", flush=True)
+    try:
+        import json
+        vis = json.loads((ROOT / "config.json").read_text(encoding="utf-8")).get("visuals", {})
+    except Exception:  # noqa: BLE001
+        vis = {}
+    if vis.get("base_mode", "rotate") == "rotate" and not list((ROOT / "assets" / "base_videos").glob("*.mp4")):
+        make_face_pool(int(vis.get("face_pool", 6)))
     n = len(list(CUT.glob("*.png"))) if CUT.exists() else 0
     if n < MIN_CUTAWAYS:
         make_cutaways()

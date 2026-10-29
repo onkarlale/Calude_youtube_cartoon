@@ -17,7 +17,8 @@ import sys
 import time
 from pathlib import Path
 
-RENDER_VERSION = 6
+RENDER_VERSION = 7
+BASE_B64 = "__BASE_B64__"   # the day's base picture/video, filled in by scripts/kaggle_run.py
 T0 = time.time()
 
 
@@ -67,11 +68,17 @@ log(f"voice ready: {TOTAL:.1f}s")
 
 # ------------------------------------------------------------------ 2. MuseTalk
 # The idle loop is built right here from the face image sent inside the payload (no Kaggle dataset needed).
-(JOB / "comedian.png").write_bytes(base64.b64decode(PAYLOAD["face_b64"]))
 IDLE = str(JOB / "base_idle.mp4")
-run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "25", "-i", str(JOB / "comedian.png"),
-     "-vf", "scale=1408:792:flags=lanczos,crop=1280:720:x='64+14*sin(2*PI*t/7)':y='36+8*sin(2*PI*t/3.5)',format=yuv420p",
-     "-t", "14", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", IDLE])
+if PAYLOAD.get("base_kind") == "video":
+    (JOB / "base_src.mp4").write_bytes(base64.b64decode(BASE_B64))
+    run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(JOB / "base_src.mp4"), "-an", "-vf",
+         "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=25,format=yuv420p",
+         "-t", "14", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", IDLE])
+else:
+    (JOB / "comedian.png").write_bytes(base64.b64decode(BASE_B64))
+    run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "25", "-i", str(JOB / "comedian.png"),
+         "-vf", "scale=1408:792:flags=lanczos,crop=1280:720:x='64+14*sin(2*PI*t/7)':y='36+8*sin(2*PI*t/3.5)',format=yuv420p",
+         "-t", "14", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", IDLE])
 log(f"idle video built: {IDLE}")
 
 ROOTDIR = Path("/tmp/mt")
