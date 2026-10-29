@@ -13,10 +13,10 @@ import time
 import uuid
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from common import BUILD, ROOT, fail, load_config, log, sh  # noqa: E402
+from common import BUILD, ROOT, base_size, cover_crop, detect_face_center, fail, is_shorts, load_config, log, sh  # noqa: E402
 
 
-EXPECTED_RENDER_VERSION = 7
+EXPECTED_RENDER_VERSION = 8
 
 
 def kaggle(*args):
@@ -28,24 +28,24 @@ IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
 VID_EXT = (".mp4", ".mov", ".webm", ".mkv", ".m4v")
 
 
-def _image_jpeg(path):
-    """A face image as a compact 1280x720 JPEG (keeps the kernel source small)."""
+def _image_jpeg(path, size, cfg):
+    """A face picture cropped around the face to the base-video shape (vertical for Shorts), as a compact JPEG."""
     import io
     from PIL import Image
+    vis = cfg.get("visuals", {})
     im = Image.open(path).convert("RGB")
-    scale = max(1280 / im.width, 720 / im.height)
-    im = im.resize((max(1280, int(im.width * scale)), max(720, int(im.height * scale))), Image.LANCZOS)
-    left, top = (im.width - 1280) // 2, (im.height - 720) // 2
-    im = im.crop((left, top, left + 1280, top + 720))
+    fx, fy = detect_face_center(im, (float(vis.get("face_x", 0.5)), float(vis.get("face_y", 0.42))))
+    out = cover_crop(im, size[0], size[1], fx, fy)
     buf = io.BytesIO()
-    im.save(buf, "JPEG", quality=92)
+    out.save(buf, "JPEG", quality=92)
     return buf.getvalue()
 
 
-def _prep_video(path):
+def _prep_video(path, size):
     """Shrink a base video (<= ~1.5 MB, <= 12 s, no audio) so it can travel inside the kernel script."""
     out = BUILD / "base_small.mp4"
-    for crf, dur, w, h in ((27, 12, 1280, 720), (31, 10, 1280, 720), (35, 8, 1280, 720), (33, 8, 960, 540)):
+    small = (int(size[0] * 0.75) // 2 * 2, int(size[1] * 0.75) // 2 * 2)
+    for crf, dur, (w, h) in ((27, 12, size), (31, 10, size), (35, 8, size), (33, 8, small)):
         rc = sh(["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-t", str(dur), "-an", "-vf",
                  f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps=25",
                  "-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast", "-pix_fmt", "yuv420p", str(out)], check=False)
@@ -112,14 +112,14 @@ def pick_base(cfg):
         idx = (start + off) % len(pool)
         kind, p = pool[idx]
         if kind == "video":
-            data = _prep_video(p)
+            data = _prep_video(p, base_size(cfg))
             if data is None:
                 log(f"[kaggle] video {p.name} could not be shrunk under 1.5 MB (use a shorter, steadier clip of about 8 s); trying another")
                 continue
             log(f"[kaggle] today's base: VIDEO {p.name} ({len(data) // 1024} KB) [{idx + 1}/{len(pool)}]")
             return "video", data
         try:
-            data = _image_jpeg(p)
+            data = _image_jpeg(p, base_size(cfg), cfg)
         except Exception as e:  # noqa: BLE001
             log(f"[kaggle] could not read {p.name} ({e}); trying another")
             continue
@@ -188,7 +188,8 @@ def main():
     kdir.mkdir(parents=True)
     payload = {
         "script": script,
-        "config": {"voice": cfg["voice"], "timing": cfg["timing"]},
+        "config": {"voice": cfg["voice"], "timing": cfg["timing"], "video_size": list(base_size(cfg)),
+                   "max_total": cfg.get("shorts", {}).get("max_seconds") if is_shorts(cfg) else None},
         "tts_lib": (ROOT / "scripts/tts_lib.py").read_text(encoding="utf-8"),
         "run_id": run_id,
     }

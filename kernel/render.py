@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-RENDER_VERSION = 7
+RENDER_VERSION = 8
 BASE_B64 = "__BASE_B64__"   # the day's base picture/video, filled in by scripts/kaggle_run.py
 T0 = time.time()
 
@@ -37,6 +37,7 @@ def run(cmd, cwd=None, env=None, check=True):
 log(f"render.py version {RENDER_VERSION}")
 PAYLOAD = json.loads(base64.b64decode("__PAYLOAD_B64__"))
 SCRIPT, CFG, RUN_ID = PAYLOAD["script"], PAYLOAD["config"], PAYLOAD["run_id"]
+VW, VH = CFG.get("video_size", [1280, 720])      # size of the lip-sync video (vertical for Shorts)
 
 WORK = Path("/kaggle/working")
 JOB = Path("/tmp/job")
@@ -60,7 +61,7 @@ run([sys.executable, "-m", "pip", "install", "-q", "edge-tts", "gTTS", "uv"])
 sys.path.insert(0, str(JOB))
 import tts_lib  # noqa: E402
 
-timings = tts_lib.synthesize(SCRIPT, JOB / "tts", CFG)
+timings = tts_lib.synthesize_capped(SCRIPT, JOB / "tts", CFG, CFG.get("max_total"))
 shutil.copy(JOB / "tts" / "voice.wav", WORK / "voice.wav")
 shutil.copy(JOB / "tts" / "timings.json", WORK / "timings.json")
 TOTAL = timings["total"]
@@ -72,12 +73,13 @@ IDLE = str(JOB / "base_idle.mp4")
 if PAYLOAD.get("base_kind") == "video":
     (JOB / "base_src.mp4").write_bytes(base64.b64decode(BASE_B64))
     run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(JOB / "base_src.mp4"), "-an", "-vf",
-         "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,fps=25,format=yuv420p",
+         f"scale={VW}:{VH}:force_original_aspect_ratio=increase,crop={VW}:{VH},fps=25,format=yuv420p",
          "-t", "14", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", IDLE])
 else:
     (JOB / "comedian.png").write_bytes(base64.b64decode(BASE_B64))
     run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "25", "-i", str(JOB / "comedian.png"),
-         "-vf", "scale=1408:792:flags=lanczos,crop=1280:720:x='64+14*sin(2*PI*t/7)':y='36+8*sin(2*PI*t/3.5)',format=yuv420p",
+         "-vf", f"scale=trunc({VW}*1.1/2)*2:trunc({VH}*1.1/2)*2:flags=lanczos,"
+                f"crop={VW}:{VH}:x='(iw-ow)/2+{VW * 0.011:.1f}*sin(2*PI*t/7)':y='(ih-oh)/2+{VH * 0.011:.1f}*sin(2*PI*t/3.5)',format=yuv420p",
          "-t", "14", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", IDLE])
 log(f"idle video built: {IDLE}")
 
@@ -224,7 +226,7 @@ for i, (a, b) in enumerate(chunks):
         raise SystemExit(f"MuseTalk produced no output for chunk {i}")
     part = JOB / f"part{i:03d}.mp4"
     run(["ffmpeg", "-y", "-loglevel", "error", "-i", found[0], "-t", f"{b - a:.3f}", "-an",
-         "-vf", "fps=25,scale=1280:720", "-c:v", "libx264", "-crf", "17", "-preset", "fast", "-pix_fmt", "yuv420p", str(part)])
+         "-vf", f"fps=25,scale={VW}:{VH}", "-c:v", "libx264", "-crf", "17", "-preset", "fast", "-pix_fmt", "yuv420p", str(part)])
     parts.append(part)
 
 lst = JOB / "concat.txt"

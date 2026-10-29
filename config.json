@@ -14,16 +14,46 @@
   "voice": {
     "engine": "edge",
     "name": "hi-IN-MadhurNeural",
-    "rate": {"setup": "+0%", "punch": "-6%", "aside": "+4%"},
+    "rate": {
+      "setup": "+0%",
+      "punch": "-6%",
+      "aside": "+4%"
+    },
     "pitch": "+0Hz"
   },
-  "timing": {"lead_ms": 1800, "tail_ms": 3500, "min_laugh_pause_ms": 1100},
-  "script": {"model": "openai/gpt-oss-120b", "min_words": 300, "max_words": 400},
+  "timing": {
+    "lead_ms": 500,
+    "tail_ms": 1200,
+    "min_laugh_pause_ms": 900
+  },
+  "script": {
+    "model": "openai/gpt-oss-120b",
+    "min_words": 300,
+    "max_words": 380
+  },
   "kaggle": {
     "kernel_slug": "comedy-render",
     "weights_dataset": "",
     "timeout_minutes": 110
   },
-  "hashtags": ["#StandUpComedy", "#HindiComedy", "#IndianComedy", "#Comedy", "#Funny"],
-  "youtube": {"category_id": "23", "made_for_kids": false, "contains_synthetic_media": true}
+  "hashtags": [
+    "#Shorts",
+    "#StandUpComedy",
+    "#HindiComedy",
+    "#IndianComedy",
+    "#Comedy"
+  ],
+  "youtube": {
+    "category_id": "23",
+    "made_for_kids": false,
+    "contains_synthetic_media": true
+  },
+  "format": "shorts",
+  "audience": "adult",
+  "shorts": {
+    "width": 1080,
+    "height": 1920,
+    "max_seconds": 175,
+    "cta_text": "Follow for daily comedy"
+  }
 }

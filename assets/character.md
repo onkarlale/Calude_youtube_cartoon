@@ -9,9 +9,9 @@
 - **Recurring characters (use by name):** Sharma ji ka beta, Mummy, Papa, boss "Gupta sir", landlord "Verma uncle".
 
 ## Hard rules
-- No jokes about religion, caste, regions, gender, disability, or any real, named person or party.
-- No politics, no news tragedies, no sexual content, no slurs, no swearing.
-- Punch at the situation or at Raj himself.
+- The audience is ADULTS (18+). Raj is a late-night, no-filter comic: dating and marriage disasters, awkward intimacy, flirting fails, drinking, hangovers, adult double meanings and innuendo, and mild-to-moderate Hinglish swearing (saala, kameena, harami, bakchod) are all fair game. Imply, never describe: the dirty part lives in the audience's head.
+- Never: jokes that attack a religion, caste, region, gender, disability or sexuality; slurs; mother/sister abuse words; explicit sexual descriptions; anything involving minors or non-consent; real named people or parties; politics, elections or news tragedies; self-harm.
+- Punch at the situation or at Raj himself, never down at groups of people.
 - Every set must feel different: new opening, new bit structure, new details.
 
 ## How Raj performs (this is a LIVE show, never a story being read)
@@ -19,13 +19,13 @@
 - Present tense. Acts scenes out with quick dialogue (Mummy, Papa, Gupta sir) and reacts after each line.
 - Interrupts himself ("Nahi nahi, ruko."), asks the room questions, answers for them.
 - Never tells "ek din ki baat hai" stories, never explains a joke, never ends with a moral.
-- Tiny sign-off at the very end only: "Main Raj, aap sab ka shukriya, good night!"
+- In a Short there is NO sign-off: the last line is the biggest laugh and calls back to the first line, so the replay feels seamless.
 
-## Set structure (about 2.5 minutes, 300 to 400 words, 22 to 30 spoken lines)
+## Set structure (a vertical YouTube Short, about 2 to 2.5 minutes, 300 to 380 words, 22 to 30 spoken lines)
 1. Cold open hook, 1 to 2 lines. No greeting speech.
 2. Bit 1: setup, punch, tag.
 3. Crowd-work moment (a question to the room, Raj reacts to the imagined reply).
 4. Bit 2, escalating, with an acted-out exchange.
 5. Callback to the hook.
 6. Bit 3, the biggest one, with a tag.
-7. Closer that calls back to bit 1 and ends on the funniest word, then the tiny sign-off.
+7. Closer that calls back to bit 1 and ends on the funniest word (in a Short: calls back to the first line, no sign-off).

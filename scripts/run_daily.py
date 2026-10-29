@@ -59,8 +59,10 @@ def main():
     if mode == "fallback":
         log("::warning::Using the FALLBACK video (no lip-sync) today.")
         shutil.rmtree(BUILD / "render", ignore_errors=True)
+        _cfg = load_config()
+        _cap = _cfg.get("shorts", {}).get("max_seconds") if _cfg.get("format", "shorts") == "shorts" else None
         rc = step(S / "tts_lib.py", "--script", BUILD / "script.json", "--out", BUILD / "render",
-                  "--config", ROOT / "config.json")
+                  "--config", ROOT / "config.json", *(["--max-total", _cap] if _cap else []))
         if rc:
             sys.exit("Fallback TTS failed too. Failing the run so you get a GitHub email.")
 

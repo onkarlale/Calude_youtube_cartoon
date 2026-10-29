@@ -135,11 +135,40 @@ def synthesize(script, outdir, cfg):
     return timings
 
 
+def _bump_rate(rate, pct):
+    """'+0%' -> '+10%', '-6%' -> '+4%'"""
+    try:
+        v = int(str(rate).replace("%", "").replace("+", "")) + pct
+    except ValueError:
+        v = pct
+    return f"{v:+d}%"
+
+
+def synthesize_capped(script, outdir, cfg, max_total=None):
+    """synthesize(), but if the whole set is longer than max_total seconds, redo it 10% then 20% faster."""
+    timings = synthesize(script, outdir, cfg)
+    if not max_total:
+        return timings
+    for bump in (10, 20):
+        if timings["total"] <= max_total:
+            break
+        print(f"[tts] {timings['total']:.0f}s is over the {max_total}s limit; redoing {bump}% faster", flush=True)
+        cfg2 = json.loads(json.dumps(cfg))
+        rates = cfg2["voice"].setdefault("rate", {})
+        for role in ("setup", "punch", "aside"):
+            rates[role] = _bump_rate(rates.get(role, "+0%"), bump)
+        timings = synthesize(script, outdir, cfg2)
+    if timings["total"] > max_total:
+        print(f"[tts] WARNING: still {timings['total']:.0f}s (limit {max_total}s). YouTube may not treat it as a Short.", flush=True)
+    return timings
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--script", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--config", required=True)
+    ap.add_argument("--max-total", type=float, default=None)
     a = ap.parse_args()
-    synthesize(json.loads(Path(a.script).read_text(encoding="utf-8")), a.out,
-               json.loads(Path(a.config).read_text(encoding="utf-8")))
+    synthesize_capped(json.loads(Path(a.script).read_text(encoding="utf-8")), a.out,
+                      json.loads(Path(a.config).read_text(encoding="utf-8")), a.max_total)

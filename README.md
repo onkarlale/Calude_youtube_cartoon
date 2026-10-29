@@ -57,3 +57,14 @@ Send me the log lines and I will patch `kernel/render.py`.
 - **Many pictures:** put as many pictures as you like in `assets/` or `assets/faces/` (png/jpg, 16:9 landscape, one face looking at
   the camera, mouth closed). Each episode picks one at random (never the same as yesterday). Pictures without a clear face are skipped.
   Set `"base_pick": "sequential"` in `config.json` to go in order instead of random.
+
+## YouTube Shorts mode (default)
+`config.json` has `"format": "shorts"`: every episode is a vertical 1080x1920 video of about 2 to 2.9 minutes, capped at
+175 seconds (YouTube treats vertical videos up to 3 minutes as Shorts). The voice is automatically sped up a little if a set
+runs long. Set `"format": "landscape"` to go back to normal 16:9 videos.
+- **Built for retention:** a scroll-stopping first line, a laugh every 10 to 12 seconds, big captions in the lower third,
+  an on-screen hook banner in the first 3 seconds, no sign-off, and a last line that calls back to the first so it loops.
+- **18+ humour:** `"audience": "adult"` allows adult comedy (dating, marriage, innuendo, mild swearing). Hard limits stay:
+  no hate or slurs, no explicit sexual content, no politics, no religion/caste jokes, no real named people. Set
+  `"audience": "clean"` for a family-friendly version. YouTube may age-restrict or limit ads on adult content.
+- **#Shorts** is added to every description automatically. Shorts have no custom thumbnail.

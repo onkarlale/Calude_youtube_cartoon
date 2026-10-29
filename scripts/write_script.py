@@ -210,9 +210,42 @@ def style_problems(script):
     return problems
 
 
+def estimate_seconds(script, cfg):
+    """Rough length of the performance: ~2.6 spoken words per second + the pauses + lead/tail."""
+    words = sum(len(sg["text"].split()) for sg in script["segments"])
+    pauses = sum(int(sg.get("pause_after_ms", 300)) for sg in script["segments"]) / 1000
+    t = cfg.get("timing", {})
+    return words / 2.6 + pauses + (t.get("lead_ms", 500) + t.get("tail_ms", 1200)) / 1000
+
+
+ADULT_RULES = (
+    "ADULT (18+) COMEDY IS ALLOWED. The audience is adults who came for a late-night, no-filter show. You MAY use: "
+    "dating, marriage and 'situationship' disasters, awkward intimacy and wedding-night nerves, flirting fails, "
+    "drinking and hangovers, adult double meanings and innuendo, roasting Raj himself and his own life, and mild to "
+    "moderate Hinglish swearing (saala, kameena, harami, bakchod, 'bakwaas'). The dirty part lives in the audience's "
+    "head: IMPLY, never describe sexual acts, never use explicit anatomy words, never use mother/sister abuse words. "
+    "HARD LIMITS (never): jokes that attack a religion, caste, region, gender, disability or sexuality; slurs; sexual "
+    "content involving minors or without consent; real named people; politics, elections or tragedies; self-harm.\n"
+)
+CLEAN_RULES = "Keep it family friendly: no swearing, no sexual content.\n"
+
+SHORTS_RULES = (
+    "THIS IS A VERTICAL YOUTUBE SHORT told in 2 to 2.5 minutes of speech. Retention is everything:\n"
+    "S1. The very first line must stop the scroll within 2 seconds: at most 10 words, a bold, cheeky or painfully "
+    "relatable claim. No greeting, no introduction.\n"
+    "S2. Something funny at least every 10 to 12 seconds (a punch line every 3 or 4 lines). A setup is at most two "
+    "short sentences. Cut every slow moment.\n"
+    "S3. The LAST line is the biggest laugh and calls back to the FIRST line so a replay feels seamless. NO sign-off, "
+    "no 'thank you', no 'good night', no 'subscribe'.\n"
+    "S4. Make people want to comment: include one line that provokes a fight or a confession ('Comment karo, kaun kaun...').\n"
+)
+
+
 def build_prompts(cfg, topic, recent):
     character = (ROOT / "assets/character.md").read_text(encoding="utf-8")
     lo, hi = cfg["script"]["min_words"], cfg["script"]["max_words"]
+    shorts = cfg.get("format", "shorts") == "shorts"
+    ADULT_RULES_USED = ADULT_RULES if cfg.get("audience", "adult") == "adult" else CLEAN_RULES
     system = (
         "You are the head writer AND live-show director for Raj, a stand-up comedian performing in a small comedy "
         "club in front of a packed, laughing crowd. You write ONLY what Raj says out loud on stage. This is a "
@@ -234,8 +267,10 @@ def build_prompts(cfg, topic, recent):
         "8. SPOKEN HINGLISH. Hindi in Devanagari, English words in Latin script as Indians really say them. Light fillers "
         "(matlab, yaar, arre) but not in every line.\n"
         "9. COLD OPEN. Start with the joke, not a greeting speech. No \"Namaste doston, aaj main aapko batane wala hoon\". "
-        "End on the biggest laugh, then one tiny sign-off aside (8 words max, for example \"Main Raj, aap sab ka shukriya, good night!\").\n"
+        + ("End on the biggest laugh that calls back to the first line. No sign-off.\n" if shorts else
+           "End on the biggest laugh, then one tiny sign-off aside (8 words max, for example \"Main Raj, aap sab ka shukriya, good night!\").\n") +
         "10. NEVER write stage directions, brackets, asterisks, emojis, hashtags or speaker labels. Only spoken words.\n"
+        + ADULT_RULES_USED + (SHORTS_RULES if shorts else "") +
         "Output JSON only.\n\n"
         f"CHARACTER BIBLE:\n{character}"
     )
@@ -245,9 +280,12 @@ def build_prompts(cfg, topic, recent):
         f"TOPIC: {topic['topic']}  (kind: {topic['kind']}; if it is news, use it only as a light spark and pivot to "
         f"everyday life; never mention politics, religion, tragedy)\n"
         f"FORMAT FOR TONIGHT: {topic['format']}\n"
-        f"SHAPE: cold-open hook (2 lines) -> bit 1 (setup, punch, tag) -> crowd-work moment -> bit 2 (escalates, "
-        f"act-out with two voices) -> callback to the hook -> bit 3 (the biggest, with a tag) -> closer that calls back "
-        f"to bit 1 -> tiny sign-off.\n"
+        + (f"SHAPE: scroll-stopping first line -> bit 1 (setup, punch, tag) -> crowd-work moment -> bit 2 (escalates, "
+           f"act-out with two voices) -> bit 3 (the biggest, with a tag) -> final line that calls back to the FIRST line. "
+           f"No sign-off.\n" if shorts else
+           f"SHAPE: cold-open hook (2 lines) -> bit 1 (setup, punch, tag) -> crowd-work moment -> bit 2 (escalates, "
+           f"act-out with two voices) -> callback to the hook -> bit 3 (the biggest, with a tag) -> closer that calls back "
+           f"to bit 1 -> tiny sign-off.\n") +
         f"LENGTH: {lo} to {hi} words in total across all segments.\n"
         f"AVOID reusing these recent titles/openings:\n{avoid}\n\n{SCHEMA}"
     )
@@ -256,6 +294,7 @@ def build_prompts(cfg, topic, recent):
 
 def punch_up_prompt(cfg, draft_json):
     lo, hi = cfg["script"]["min_words"], cfg["script"]["max_words"]
+    shorts = cfg.get("format", "shorts") == "shorts"
     return (
         "You are the script doctor. Rewrite this draft so it performs like a LIVE stand-up set, then punch it up.\n"
         "LIVE PASS (most important):\n"
@@ -269,11 +308,14 @@ def punch_up_prompt(cfg, draft_json):
         "- Use specifics (a number, a brand type, a named relative) instead of generic words.\n"
         "- Rule of three with a twist, escalation, one callback to the opening, and a closer that calls back to bit 1.\n"
         "- Add a quick tag joke after the two best punch lines.\n"
-        "- The first line must hook within 5 seconds. The last real line is the biggest laugh, then a tiny sign-off aside.\n"
+        + ("- The first line must stop the scroll within 2 seconds (max 10 words). The LAST line is the biggest laugh and "
+           "calls back to the first line. Delete any sign-off. A laugh at least every 10 to 12 seconds.\n" if shorts else
+           "- The first line must hook within 5 seconds. The last real line is the biggest laugh, then a tiny sign-off aside.\n") +
         f"- Keep it between {lo} and {hi} words. Keep 22 to 30 segments and the same JSON shape.\n"
         "- Also add: \"title\" (max 70 chars, Hinglish, curiosity-driven, no clickbait lies), "
-        "\"description\" (2 short lines, Hinglish), \"tags\" (8 to 12 short strings), "
-        "\"thumb_text\" (max 4 words, Latin script, ALL CAPS, punchy).\n\n"
+        "\"description\" (2 short lines, Hinglish; the first line is a question to the viewer that makes them comment), "
+        "\"tags\" (8 to 12 short strings), "
+        "\"thumb_text\" (max 4 words, Latin script, ALL CAPS, punchy; it is also the on-screen hook banner in the first seconds).\n\n"
         f"DRAFT:\n{json.dumps(draft_json, ensure_ascii=False)}\n\n{SCHEMA}\n"
         "Plus the extra keys title, description, tags, thumb_text in the same JSON object."
     )
@@ -315,6 +357,10 @@ def main():
             problems.append(f"word count {words} is outside {lo}-{hi}")
         if hits:
             problems.append(f"remove these forbidden words/topics: {hits}")
+        est = estimate_seconds(final, cfg)
+        cap = cfg.get("shorts", {}).get("max_seconds", 175) if cfg.get("format", "shorts") == "shorts" else None
+        if cap and est > cap * 1.12:
+            problems.append(f"too long: about {est:.0f}s of speech, must be under {cap * 1.1:.0f}s. Cut about {int((est - cap) * 2.4)} words")
         style = style_problems(final)
         if style:
             log(f"[writer] style check: {style}")
