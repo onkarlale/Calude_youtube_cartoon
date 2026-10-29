@@ -61,32 +61,74 @@ def episode_number():
         return 0
 
 
+def pick_index(n, size, how):
+    """Which pool item for episode n. 'random' never repeats the previous episode's pick and gives the SAME
+    answer on a retry of the same episode (stateless, seeded)."""
+    if size <= 1:
+        return 0
+    if how == "sequential":
+        return n % size
+    import random
+    rnd, prev = random.Random(20261029), -1
+    for _ in range(n + 1):
+        prev = rnd.choice([i for i in range(size) if i != prev])
+    return prev
+
+
+def _has_face(jpeg_bytes):
+    """Best effort: False only if OpenCV works AND finds no face (MuseTalk cannot lip-sync a picture without one)."""
+    try:
+        import cv2
+        import numpy as np
+        img = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_GRAYSCALE)
+        det = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        if det.empty():
+            return True
+        return len(det.detectMultiScale(img, 1.1, 5, minSize=(60, 60))) > 0
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def base_pool():
+    """Every picture in assets/ and assets/faces/ plus every clip in assets/base_videos/."""
+    imgs = sorted(p for p in (ROOT / "assets").glob("*") if p.suffix.lower() in IMG_EXT)
+    imgs += sorted(p for p in (ROOT / "assets/faces").glob("*") if p.suffix.lower() in IMG_EXT)
+    vids = sorted(p for p in (ROOT / "assets/base_videos").glob("*") if p.suffix.lower() in VID_EXT)
+    return [("video", p) for p in vids] + [("image", p) for p in imgs]
+
+
 def pick_base(cfg):
-    """Choose today's base: rotates through assets/base_videos/*, assets/faces/* and assets/comedian.png."""
+    """Choose today's base picture/video from the pool (random by default)."""
     vis = cfg.get("visuals", {})
     main = ROOT / "assets/comedian.png"
-    faces = ([main] if main.exists() else []) + sorted(
-        p for p in (ROOT / "assets/faces").glob("*") if p.suffix.lower() in IMG_EXT)
-    vids = sorted(p for p in (ROOT / "assets/base_videos").glob("*") if p.suffix.lower() in VID_EXT)
-    if vis.get("base_mode", "rotate") == "single" or (not vids and len(faces) <= 1):
-        pool = [("image", main)] if main.exists() else [("image", faces[0])] if faces else []
-    else:
-        pool = [("video", p) for p in vids] + [("image", p) for p in faces]
+    pool = base_pool()
+    if vis.get("base_mode", "rotate") == "single" and main.exists():
+        pool = [("image", main)]
     if not pool:
-        fail("No comedian image found: assets/comedian.png is missing.")
+        fail("No comedian picture found. Put at least one image in assets/ (for example assets/comedian.png).")
     n = episode_number()
+    start = pick_index(n, len(pool), vis.get("base_pick", "random"))
     for off in range(len(pool)):
-        kind, p = pool[(n + off) % len(pool)]
+        idx = (start + off) % len(pool)
+        kind, p = pool[idx]
         if kind == "video":
             data = _prep_video(p)
             if data is None:
-                log(f"[kaggle] video {p.name} could not be shrunk under 1.5 MB (use a shorter, steadier clip of about 8 s); trying the next base")
+                log(f"[kaggle] video {p.name} could not be shrunk under 1.5 MB (use a shorter, steadier clip of about 8 s); trying another")
                 continue
-            log(f"[kaggle] today's base: VIDEO {p.name} ({len(data) // 1024} KB) [{(n + off) % len(pool) + 1}/{len(pool)}]")
+            log(f"[kaggle] today's base: VIDEO {p.name} ({len(data) // 1024} KB) [{idx + 1}/{len(pool)}]")
             return "video", data
-        log(f"[kaggle] today's base: IMAGE {p.name} [{(n + off) % len(pool) + 1}/{len(pool)}]")
-        return "image", _image_jpeg(p)
-    fail("No usable base image or video.")
+        try:
+            data = _image_jpeg(p)
+        except Exception as e:  # noqa: BLE001
+            log(f"[kaggle] could not read {p.name} ({e}); trying another")
+            continue
+        if not _has_face(data):
+            log(f"[kaggle] no clear face found in {p.name}; trying another picture")
+            continue
+        log(f"[kaggle] today's base: IMAGE {p.relative_to(ROOT)} [{idx + 1}/{len(pool)}]")
+        return "image", data
+    fail("No usable base picture or video (every file was unreadable or had no clear face).")
 
 
 def dump_kernel_log(ref, lines=70):

@@ -122,7 +122,8 @@ def make_face_pool(target):
     import json
     faces_dir = ROOT / "assets" / "faces"
     faces_dir.mkdir(parents=True, exist_ok=True)
-    have = len(list(faces_dir.glob("*.png"))) + (1 if FACE.exists() else 0)
+    exts = (".png", ".jpg", ".jpeg", ".webp")
+    have = sum(1 for d in (faces_dir, ROOT / "assets") for p in d.glob("*") if p.suffix.lower() in exts)
     need = target - have
     if need <= 0:
         print(f"[bootstrap] face pool ok ({have} faces)", flush=True)

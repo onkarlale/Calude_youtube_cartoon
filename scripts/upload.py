@@ -60,6 +60,34 @@ def insert(yt, body, path):
     return resp
 
 
+def _hashtag(word_text):
+    """'stand up comedy' -> '#StandUpComedy' (letters/digits/marks only, Hindi letters allowed)."""
+    import unicodedata
+    parts = []
+    for w in str(word_text).replace("#", " ").split():
+        w = "".join(ch for ch in w if unicodedata.category(ch)[0] in "LMN")
+        if w:
+            parts.append(w[:1].upper() + w[1:])
+    tag = "".join(parts)
+    return "#" + tag if 2 <= len(tag) <= 28 else ""
+
+
+def build_hashtags(cfg, script, limit=12):
+    """Channel hashtags first (YouTube shows the first 3 above the title), then topical ones from the script tags.
+    YouTube ignores ALL hashtags if a video has more than 15, so we stay at 12 or fewer."""
+    out, seen = [], set()
+    candidates = [h for h in cfg.get("hashtags", ["#StandUpComedy", "#HindiComedy", "#IndianComedy", "#Comedy"])]
+    candidates += [_hashtag(t) for t in script.get("tags", [])]
+    for h in candidates:
+        h = _hashtag(h) if h else ""
+        if h and h.lower() not in seen:
+            seen.add(h.lower())
+            out.append(h)
+        if len(out) >= limit:
+            break
+    return " ".join(out)
+
+
 def main():
     from googleapiclient.errors import HttpError
 
@@ -82,7 +110,7 @@ def main():
             tags.append(t)
             total += len(t) + 1
     title = (script.get("title") or topic["topic"])[:100].replace("<", "").replace(">", "")
-    desc = (script.get("description") or "") + DISCLOSURE + "\n\n#standupcomedy #hindicomedy #comedy"
+    desc = (script.get("description") or "") + DISCLOSURE + "\n\n" + build_hashtags(cfg, script)
 
     yt_cfg = cfg["youtube"]
     body = {

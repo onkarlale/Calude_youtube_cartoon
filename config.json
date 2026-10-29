@@ -5,6 +5,7 @@
   "fallback_upload": false,
   "visuals": {
     "base_mode": "rotate",
+    "base_pick": "random",
     "face_pool": 6,
     "camera_cuts": true,
     "face_x": 0.5,
@@ -23,5 +24,6 @@
     "weights_dataset": "",
     "timeout_minutes": 110
   },
+  "hashtags": ["#StandUpComedy", "#HindiComedy", "#IndianComedy", "#Comedy", "#Funny"],
   "youtube": {"category_id": "23", "made_for_kids": false, "contains_synthetic_media": true}
 }

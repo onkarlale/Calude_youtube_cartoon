@@ -50,3 +50,10 @@ Send me the log lines and I will patch `kernel/render.py`.
 - **Your own videos:** drop clips into `assets/base_videos/` (see the README.txt there). They join the daily rotation.
 - **Camera cuts:** every episode is edited like a multi-camera special: wide, medium and close-up shots, with close-ups on
   punchlines. Turn off with `"camera_cuts": false`.
+
+## Hashtags and picking pictures
+- **Hashtags:** every upload gets hashtags at the end of its description (YouTube shows the first 3 above the title).
+  Edit the channel list under `"hashtags"` in `config.json`; topical ones from each episode's tags are added automatically (max 12).
+- **Many pictures:** put as many pictures as you like in `assets/` or `assets/faces/` (png/jpg, 16:9 landscape, one face looking at
+  the camera, mouth closed). Each episode picks one at random (never the same as yesterday). Pictures without a clear face are skipped.
+  Set `"base_pick": "sequential"` in `config.json` to go in order instead of random.
