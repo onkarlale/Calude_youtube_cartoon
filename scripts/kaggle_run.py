@@ -89,6 +89,46 @@ def pick_base(cfg):
     fail("No usable base image or video.")
 
 
+def dump_kernel_log(ref, lines=70):
+    """On failure, download the kernel's own log and print its tail so the cause shows in GitHub."""
+    d = BUILD / "kernel_log"
+    shutil.rmtree(d, ignore_errors=True)
+    d.mkdir(parents=True)
+    rc, out = kaggle("kernels", "output", ref, "-p", str(d))
+    logs = list(d.glob("*.log"))
+    log(f"[kaggle] ---- kernel log tail ({'found' if logs else 'no log file; ' + out[-200:]}) ----")
+    for f in logs:
+        raw = f.read_text(encoding="utf-8", errors="replace")
+        try:
+            items = json.loads(raw)
+            text = "".join(i.get("data", "") for i in items)
+        except Exception:  # noqa: BLE001
+            text = raw
+        for ln in text.splitlines()[-lines:]:
+            log("  | " + ln[:300])
+    log("[kaggle] ---- end kernel log ----")
+
+
+def setup_auth():
+    """Accept both Kaggle credential styles, whichever secret name the token was saved under."""
+    key = (os.environ.get("KAGGLE_KEY") or "").strip()
+    tok = (os.environ.get("KAGGLE_API_TOKEN") or "").strip()
+    if not tok and key.startswith("KGAT_"):      # new-style token pasted into KAGGLE_KEY
+        tok = key
+        os.environ.pop("KAGGLE_KEY", None)
+    if tok:
+        os.environ["KAGGLE_API_TOKEN"] = tok
+        d = os.path.expanduser("~/.kaggle")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "access_token"), "w", encoding="utf-8") as f:
+            f.write(tok)
+        os.chmod(os.path.join(d, "access_token"), 0o600)
+        log("[kaggle] using new-style API token")
+    elif key:
+        log("[kaggle] using legacy KAGGLE_USERNAME + KAGGLE_KEY")
+    return bool(tok or key)
+
+
 def main():
     cfg = load_config()
     setup_auth()
