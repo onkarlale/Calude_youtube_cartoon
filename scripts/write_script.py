@@ -27,12 +27,14 @@ BANNED = [
 SCHEMA = """Return ONLY valid JSON:
 {
   "segments": [
-    {"text": "one or two spoken sentences", "role": "setup|punch|aside", "pause_after_ms": 300}
+    {"text": "what Raj says out loud in one breath", "role": "setup|punch|aside", "pause_after_ms": 300}
   ]
 }
-- role "punch": the line ends with the funniest word LAST (the audience laughs after it).
-- role "setup": builds the situation. role "aside": quick muttered side remark.
-- Each segment is spoken in one breath: at most 25 words."""
+- role "setup": 1 or 2 short spoken sentences that build the moment (max 22 words).
+- role "punch": the joke line. At most 14 words. The surprising word comes LAST. The room laughs after it.
+- role "aside": a quick side remark to the room, a crowd-work question, a self-interruption or a reaction ("Seriously?").
+- 22 to 30 segments in total. About one third of them are punch lines.
+- Only words Raj SAYS. No stage directions, no brackets, no asterisks, no emojis, no labels like "Raj:"."""
 
 SAMPLE = {
     "title": "Smoke test video",
@@ -175,22 +177,77 @@ def normalize(script, cfg):
     return script
 
 
+STORY_MARKERS = [
+    "एक बार", "एक दिन", "कहानी", "ek baar", "ek din", "kahani", "once upon", "let me tell you a story",
+    "तो हुआ यह कि", "to hua yeh ki", "सीख", "moral", "इस कहानी",
+]
+ADDRESS = ["आप", "aap", "भाई", "bhai", "यार", "yaar", "दोस्तों", "dosto", "सब", "हाथ", "बोलो", "सच बोलूँ", "सच बोलूं", "hai na", "है ना", "है न"]
+
+
+def style_problems(script):
+    """Reject sets that read like a story. Returns a list of problems (empty = sounds like live stand-up)."""
+    segs = script.get("segments", [])
+    if not segs:
+        return []
+    texts = [s["text"] for s in segs]
+    blob = " ".join(texts).lower()
+    problems = []
+    marks = [m for m in STORY_MARKERS if m.lower() in blob]
+    if marks:
+        problems.append(f"it sounds like a story being read (found {marks}); perform it live instead, in the present tense")
+    addr = sum(1 for t in texts if any(a.lower() in t.lower() for a in ADDRESS))
+    if addr < 7:
+        problems.append(f"only {addr} lines talk directly to the audience; at least 8 lines must address the room (aap log, bhai, yaar, dosto, hai na)")
+    q = blob.count("?")
+    if q < 5:
+        problems.append(f"only {q} questions; add at least 5 questions to the room or self-interruptions")
+    longest = max(len(t.split()) for t in texts)
+    if longest > 30:
+        problems.append(f"a line has {longest} words; no line may exceed 26 words")
+    punch = sum(1 for s in segs if s["role"] == "punch") / len(segs)
+    if punch < 0.25:
+        problems.append("too few punch lines; at least a quarter of the lines must be punch lines")
+    return problems
+
+
 def build_prompts(cfg, topic, recent):
     character = (ROOT / "assets/character.md").read_text(encoding="utf-8")
     lo, hi = cfg["script"]["min_words"], cfg["script"]["max_words"]
     system = (
-        "You are the head writer of a hit Hindi stand-up comedy channel. You write jokes that are specific, "
-        "surprising and perform well out loud. Generic observations are failures. Output JSON only.\n\n"
+        "You are the head writer AND live-show director for Raj, a stand-up comedian performing in a small comedy "
+        "club in front of a packed, laughing crowd. You write ONLY what Raj says out loud on stage. This is a "
+        "LIVE PERFORMANCE, not a story, not an essay, not narration. If it could be read as a short story, it is wrong.\n\n"
+        "LIVE-PERFORMANCE RULES (follow every one):\n"
+        "1. TALK TO THE ROOM. In at least 8 lines address the audience directly: aap log, bhai, yaar, dosto, hai na?, "
+        "sach bolun?, haath uthao. Raj can see the front row and reacts to them.\n"
+        "2. PRESENT TENSE, IN THE MOMENT. Say \"Main office pahunchta hoon aur Gupta sir bolte hain...\" not \"ek din main office gaya "
+        "aur...\". NEVER use story openers or morals: no \"ek baar\", \"ek din\", \"kahani\", \"once upon\", \"toh hua yeh ki\", no lesson at the end.\n"
+        "3. ACT IT OUT, DO NOT DESCRIBE IT. Put short dialogue in the mouths of Mummy, Papa, Gupta sir, Sharma ji ka beta "
+        "(\"Mummy bolti hain, 'beta, shaadi kab?'\") and let Raj react in the next line.\n"
+        "4. CROWD WORK, 2 or 3 times: ask the room a quick question, then answer for them or react to an imagined reply "
+        "(\"Haath uthao jinke ghar mein... haan, front row wale uncle, aap bhi?\"). Never wait for a real answer.\n"
+        "5. RHYTHM. Setup: one or two short sentences. Punch: 14 words or fewer, the surprising word LAST. Mix tiny lines "
+        "(\"Seriously?\", \"Nahi nahi, ruko.\") with longer ones. Interrupt yourself. Never two long lines in a row.\n"
+        "6. ESCALATE. Each bit is bigger and weirder than the last. Use rule of three with a twist. One callback to the "
+        "opening inside the set and one callback in the closer.\n"
+        "7. SPECIFIC BEATS GENERIC. Exact amounts, times, relatives by name, brand types, a precise object. Numbers as words.\n"
+        "8. SPOKEN HINGLISH. Hindi in Devanagari, English words in Latin script as Indians really say them. Light fillers "
+        "(matlab, yaar, arre) but not in every line.\n"
+        "9. COLD OPEN. Start with the joke, not a greeting speech. No \"Namaste doston, aaj main aapko batane wala hoon\". "
+        "End on the biggest laugh, then one tiny sign-off aside (8 words max, for example \"Main Raj, aap sab ka shukriya, good night!\").\n"
+        "10. NEVER write stage directions, brackets, asterisks, emojis, hashtags or speaker labels. Only spoken words.\n"
+        "Output JSON only.\n\n"
         f"CHARACTER BIBLE:\n{character}"
     )
     avoid = "\n".join(f"- {r}" for r in recent) or "- (none yet)"
     draft = (
-        f"Write ONE stand-up set for Raj.\n"
+        f"Write ONE live stand-up set for Raj, performed to the room tonight.\n"
         f"TOPIC: {topic['topic']}  (kind: {topic['kind']}; if it is news, use it only as a light spark and pivot to "
         f"everyday life; never mention politics, religion, tragedy)\n"
-        f"FORMAT FOR TODAY: {topic['format']}\n"
-        f"LANGUAGE: spoken Hinglish. Hindi in Devanagari; English words in Latin script when Indians say them in English. "
-        f"Write numbers as words (e.g. पाँच सौ रुपये), never digits. No emojis.\n"
+        f"FORMAT FOR TONIGHT: {topic['format']}\n"
+        f"SHAPE: cold-open hook (2 lines) -> bit 1 (setup, punch, tag) -> crowd-work moment -> bit 2 (escalates, "
+        f"act-out with two voices) -> callback to the hook -> bit 3 (the biggest, with a tag) -> closer that calls back "
+        f"to bit 1 -> tiny sign-off.\n"
         f"LENGTH: {lo} to {hi} words in total across all segments.\n"
         f"AVOID reusing these recent titles/openings:\n{avoid}\n\n{SCHEMA}"
     )
@@ -200,14 +257,20 @@ def build_prompts(cfg, topic, recent):
 def punch_up_prompt(cfg, draft_json):
     lo, hi = cfg["script"]["min_words"], cfg["script"]["max_words"]
     return (
-        "Punch up this stand-up draft like a ruthless comedy script doctor.\n"
-        "- Cut filler and any line that is not funny. Shorter sentences.\n"
-        "- Put the surprising word at the very END of each punchline.\n"
+        "You are the script doctor. Rewrite this draft so it performs like a LIVE stand-up set, then punch it up.\n"
+        "LIVE PASS (most important):\n"
+        "- Turn every piece of narration into in-the-moment performance: present tense, acted-out dialogue, direct address.\n"
+        "- Delete story openers, summaries, explanations of jokes and any moral.\n"
+        "- At least 8 lines speak straight to the audience. At least 5 questions to the room or self-interruptions.\n"
+        "- Two or three crowd-work moments where Raj reacts to an imagined front-row reaction.\n"
+        "PUNCH-UP PASS:\n"
+        "- Cut filler and any line that is not funny. Shorter sentences. Punch lines 14 words or fewer.\n"
+        "- The surprising word goes at the very END of each punch line.\n"
         "- Use specifics (a number, a brand type, a named relative) instead of generic words.\n"
-        "- Use rule of three with a twist, escalation, and at least one callback to the opening.\n"
-        "- Add a quick tag joke (role aside or punch) after the two best punchlines.\n"
-        "- The first line must hook within 5 seconds. The last line must be the biggest laugh.\n"
-        f"- Keep it between {lo} and {hi} words. Keep the same JSON shape.\n"
+        "- Rule of three with a twist, escalation, one callback to the opening, and a closer that calls back to bit 1.\n"
+        "- Add a quick tag joke after the two best punch lines.\n"
+        "- The first line must hook within 5 seconds. The last real line is the biggest laugh, then a tiny sign-off aside.\n"
+        f"- Keep it between {lo} and {hi} words. Keep 22 to 30 segments and the same JSON shape.\n"
         "- Also add: \"title\" (max 70 chars, Hinglish, curiosity-driven, no clickbait lies), "
         "\"description\" (2 short lines, Hinglish), \"tags\" (8 to 12 short strings), "
         "\"thumb_text\" (max 4 words, Latin script, ALL CAPS, punchy).\n\n"
@@ -252,6 +315,13 @@ def main():
             problems.append(f"word count {words} is outside {lo}-{hi}")
         if hits:
             problems.append(f"remove these forbidden words/topics: {hits}")
+        style = style_problems(final)
+        if style:
+            log(f"[writer] style check: {style}")
+            if attempt < 4:
+                problems.extend(style)
+            else:
+                log("[writer] last attempt: accepting despite style warnings")
         if not problems:
             break
         feedback = "\n\nPREVIOUS ATTEMPT WAS REJECTED: " + "; ".join(problems) + ". Fix this."

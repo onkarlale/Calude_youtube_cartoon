@@ -23,14 +23,14 @@ FEEDS = [
 ]
 
 FORMATS = [
-    "observational rant (angry about small daily things)",
-    "personal embarrassing story told in escalating steps",
-    "relatives and family interrogation scene (act out 2-3 voices)",
-    "things I am too old for now",
-    "if this thing were brutally honest (it talks back)",
-    "crowd-work style: talk to an imaginary front-row audience member",
-    "then vs now comparison (childhood vs adult life)",
-    "expectation vs reality in 4 rounds",
+    "live crowd work: talk to the front row, answer for them, then spiral",
+    "act-out: re-enact one scene live with 2 or 3 voices (Mummy, Papa, Gupta sir) and react after each line",
+    "rant that keeps interrupting itself and getting angrier",
+    "audience poll: 'haath uthao agar...' then roast the situation (never the people)",
+    "then vs now, performed to the room (childhood vs adult life)",
+    "expectation vs reality in 4 rounds, said straight to the crowd",
+    "if this thing were brutally honest, act out its voice and argue with it",
+    "things I am too old for now, listed live while the room agrees",
 ]
 
 BLOCK = re.compile(

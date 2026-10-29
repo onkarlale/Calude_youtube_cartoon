@@ -14,10 +14,18 @@
 - Punch at the situation or at Raj himself.
 - Every set must feel different: new opening, new bit structure, new details.
 
-## Set structure (about 2.5 minutes, 300 to 400 words)
-1. Hook, 1 to 2 lines. A surprising claim or a specific scene.
-2. Bit 1, with setup, punchline, and a tag joke.
-3. Bit 2, escalating.
-4. Callback to the hook.
-5. Bit 3, the biggest one.
-6. Closer that calls back to bit 1 and ends on the funniest word.
+## How Raj performs (this is a LIVE show, never a story being read)
+- Talks straight to the crowd: "aap log", "bhai", "yaar", "hai na?". Sees the front row and reacts to them.
+- Present tense. Acts scenes out with quick dialogue (Mummy, Papa, Gupta sir) and reacts after each line.
+- Interrupts himself ("Nahi nahi, ruko."), asks the room questions, answers for them.
+- Never tells "ek din ki baat hai" stories, never explains a joke, never ends with a moral.
+- Tiny sign-off at the very end only: "Main Raj, aap sab ka shukriya, good night!"
+
+## Set structure (about 2.5 minutes, 300 to 400 words, 22 to 30 spoken lines)
+1. Cold open hook, 1 to 2 lines. No greeting speech.
+2. Bit 1: setup, punch, tag.
+3. Crowd-work moment (a question to the room, Raj reacts to the imagined reply).
+4. Bit 2, escalating, with an acted-out exchange.
+5. Callback to the hook.
+6. Bit 3, the biggest one, with a tag.
+7. Closer that calls back to bit 1 and ends on the funniest word, then the tiny sign-off.

@@ -148,6 +148,30 @@ def make_face_pool(target):
         print(f"[bootstrap] extra face {made}/{need}", flush=True)
 
 
+def make_reactions(target=8):
+    """AI audience members with visible, laughing faces (assets/cutaways/react_XX.png)."""
+    cv2, det = detector()
+    CUT.mkdir(parents=True, exist_ok=True)
+    have = len(list(CUT.glob("react_*.png")))
+    attempts = 0
+    while have < target and attempts < target * 4:
+        scene = gc.REACTION_SCENES[(have + attempts) % len(gc.REACTION_SCENES)]
+        attempts += 1
+        im = cf_image.generate(f"{scene}, {gc.BASE_REACT}")
+        if im is None:
+            continue
+        im = cf_image.crop_169(im, 1920, 1080, y_frac=0.35)
+        if cv2 is not None:
+            import numpy as np
+            g = cv2.cvtColor(np.array(im), cv2.COLOR_RGB2GRAY)
+            if len(det.detectMultiScale(g, 1.1, 5, minSize=(70, 70))) == 0:
+                print("[bootstrap] reaction rejected (no clear face)", flush=True)
+                continue
+        im.save(CUT / f"react_{have:02d}.png")
+        have += 1
+        print(f"[bootstrap] audience reaction {have}/{target}", flush=True)
+
+
 def main():
     if os.environ.get("FORCE_FACE") == "1" and FACE.exists():
         FACE.unlink()
@@ -163,6 +187,9 @@ def main():
     if vis.get("base_mode", "rotate") == "rotate" and not list((ROOT / "assets" / "base_videos").glob("*.mp4")):
         make_face_pool(int(vis.get("face_pool", 6)))
     n = len(list(CUT.glob("*.png"))) if CUT.exists() else 0
+    if len(list(CUT.glob("react_*.png"))) < 8:
+        make_reactions(8)
+        n = len(list(CUT.glob("*.png")))
     if n < MIN_CUTAWAYS:
         make_cutaways()
     else:

@@ -19,6 +19,23 @@ SCENES = [
 ]
 
 
+# Reaction shots: real-looking (AI) people with visible faces, laughing at the show.
+BASE_REACT = ("photorealistic candid photo, natural skin texture, sharp focus on the faces, shallow depth of field, "
+              "dim comedy club, warm lighting, 35mm photograph, no text, no watermark")
+REACTION_SCENES = [
+    "close-up of an Indian man in his thirties laughing out loud at a comedy show, eyes crinkled, blurred audience behind him",
+    "close-up of an Indian woman laughing and clapping at a comedy club, joyful expression, warm bokeh lights",
+    "middle-aged Indian man in a checked shirt laughing hard and wiping a tear, sitting at a table in a comedy club",
+    "two young Indian friends laughing together at a comedy show, shoulders up, candid moment",
+    "group of four Indian friends at a table laughing hard, drinks in front of them, comedy club, medium shot",
+    "Indian man clapping with his head thrown back laughing, comedy club audience, candid",
+    "young Indian woman covering her mouth while laughing, comedy club, candid close-up",
+    "middle-aged Indian woman laughing and nudging her husband at a comedy show, candid medium shot",
+    "Indian man in a blue shirt pointing at the stage and laughing, audience around him, candid",
+    "three Indian colleagues in office clothes laughing together at a comedy night, candid medium shot",
+]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--count", type=int, default=12)

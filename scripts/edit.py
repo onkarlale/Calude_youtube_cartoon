@@ -141,8 +141,26 @@ def build_audio(timings, voice, out_wav, windows):
 
 
 # ---------------------------------------------------------------- cutaways
+def _motion_clip(src_png, dur, out_mp4, variant):
+    """Slow zoom / pan on a still audience picture so the cutaway feels like a camera shot, not a slide."""
+    frames = max(int(dur * FPS), 2)
+    if variant == 0:      # slow push in
+        z, x = "min(1.0+0.0011*on,1.28)", "iw/2-(iw/zoom/2)"
+    elif variant == 1:    # slow pull out
+        z, x = "max(1.28-0.0011*on,1.0)", "iw/2-(iw/zoom/2)"
+    elif variant == 2:    # pan left to right
+        z, x = "1.18", f"(iw-iw/zoom)*on/{frames}"
+    else:                 # pan right to left
+        z, x = "1.18", f"(iw-iw/zoom)*(1-on/{frames})"
+    vf = (f"scale=3200:-1,zoompan=z='{z}':x='{x}':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={FPS},"
+          f"setsar=1,format=yuv420p")
+    sh(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", str(FPS), "-i", str(src_png),
+        "-t", f"{dur:.2f}", "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(out_mp4)])
+
+
 def prepare_cutaways(timings, seed):
-    """Choose laugh windows that get an audience cutaway. Returns [(start, end, png_path)]."""
+    """Choose laugh windows that get an audience cutaway. Returns [(start, end, path, is_clip)].
+    Faces (react_*.png) are preferred 2 times out of 3 over the plain crowd-from-behind pictures."""
     files = sorted(p for p in (ROOT / "assets/cutaways").glob("*") if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"))
     if not files:
         log("[edit] no assets/cutaways images: video will be talking head only")
@@ -156,11 +174,22 @@ def prepare_cutaways(timings, seed):
         step = len(wins) / MAX_CUTAWAYS
         wins = [wins[int(i * step)] for i in range(MAX_CUTAWAYS)]
     rnd = random.Random(seed)
-    order = files[:]
-    rnd.shuffle(order)
+    react = [p for p in files if p.name.startswith("react_")]
+    other = [p for p in files if not p.name.startswith("react_")]
+    rnd.shuffle(react)
+    rnd.shuffle(other)
+    order, ri, oi = [], 0, 0
+    for k in range(len(wins)):
+        use_react = react and (k % 3 != 2 or not other)
+        if use_react:
+            order.append(react[ri % len(react)])
+            ri += 1
+        else:
+            order.append(other[oi % len(other)])
+            oi += 1
     out = []
     for k, (a, b) in enumerate(wins):
-        src = order[k % len(order)]
+        src = order[k]
         im = Image.open(src).convert("RGB")
         scale = max(W / im.width, H / im.height)
         im = im.resize((int(im.width * scale) + 1, int(im.height * scale) + 1), Image.LANCZOS)
@@ -168,7 +197,13 @@ def prepare_cutaways(timings, seed):
         im = im.crop((left, top, left + W, top + H))
         p = BUILD / f"cut_{k}.png"
         im.save(p)
-        out.append((a, b, p))
+        clip = BUILD / f"cut_{k}.mp4"
+        try:
+            _motion_clip(p, (b - a) + 0.3, clip, rnd.randint(0, 3))
+            out.append((a, b, clip, True))
+        except Exception as e:  # noqa: BLE001
+            log(f"[edit] cutaway motion failed ({str(e)[:120]}); using a still picture")
+            out.append((a, b, p, False))
     return out
 
 
@@ -316,9 +351,14 @@ def main():
 
     inputs = list(in_main)
     cur = "v0"
-    for k, (a, b, png) in enumerate(windows):
-        inputs += ["-loop", "1", "-framerate", str(FPS), "-i", str(png)]
-        chain.append(f"[{cur}][{k + 1}:v]overlay=0:0:enable='between(t,{a:.2f},{b:.2f})'[ov{k}]")
+    for k, (a, b, path, is_clip) in enumerate(windows):
+        if is_clip:
+            inputs += ["-i", str(path)]
+            chain.append(f"[{k + 1}:v]setpts=PTS-STARTPTS+{a:.3f}/TB[cv{k}]")
+            chain.append(f"[{cur}][cv{k}]overlay=0:0:eof_action=pass:enable='between(t,{a:.2f},{b:.2f})'[ov{k}]")
+        else:
+            inputs += ["-loop", "1", "-framerate", str(FPS), "-i", str(path)]
+            chain.append(f"[{cur}][{k + 1}:v]overlay=0:0:enable='between(t,{a:.2f},{b:.2f})'[ov{k}]")
         cur = f"ov{k}"
     audio_idx = 1 + len(windows)
     inputs += ["-i", str(BUILD / "mix.wav")]
