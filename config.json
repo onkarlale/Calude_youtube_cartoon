@@ -29,7 +29,13 @@
   "script": {
     "model": "openai/gpt-oss-120b",
     "min_words": 300,
-    "max_words": 380
+    "max_words": 380,
+    "providers": [
+      "gemini",
+      "groq"
+    ],
+    "thinking": "medium",
+    "crowd_test": true
   },
   "kaggle": {
     "kernel_slug": "comedy-render",
@@ -41,7 +47,15 @@
     "#StandUpComedy",
     "#HindiComedy",
     "#IndianComedy",
-    "#Comedy"
+    "#Comedy",
+    "#Funny",
+    "#ComedyShorts",
+    "#FunnyShorts",
+    "#Relatable",
+    "#Desi",
+    "#IndianHumor",
+    "#Laugh",
+    "#Trending"
   ],
   "youtube": {
     "category_id": "23",
@@ -49,11 +63,16 @@
     "contains_synthetic_media": true
   },
   "format": "shorts",
-  "audience": "adult",
+  "audience": "teen",
   "shorts": {
     "width": 1080,
     "height": 1920,
     "max_seconds": 175,
-    "cta_text": "Follow for daily comedy"
-  }
+    "cta_text": "Follow for daily comedy",
+    "layout": "stage"
+  },
+  "title_hashtags": [
+    "#Shorts",
+    "#HindiComedy"
+  ]
 }

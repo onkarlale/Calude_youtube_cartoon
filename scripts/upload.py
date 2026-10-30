@@ -72,9 +72,9 @@ def _hashtag(word_text):
     return "#" + tag if 2 <= len(tag) <= 28 else ""
 
 
-def build_hashtags(cfg, script, limit=12):
+def build_hashtags(cfg, script, limit=14):
     """Channel hashtags first (YouTube shows the first 3 above the title), then topical ones from the script tags.
-    YouTube ignores ALL hashtags if a video has more than 15, so we stay at 12 or fewer."""
+    YouTube ignores ALL hashtags if a video has more than 15, so we stay at 14 or fewer."""
     out, seen = [], set()
     candidates = [h for h in cfg.get("hashtags", ["#StandUpComedy", "#HindiComedy", "#IndianComedy", "#Comedy"])]
     candidates += [_hashtag(t) for t in script.get("tags", [])]
@@ -109,7 +109,14 @@ def main():
         if t and total + len(t) < 450:
             tags.append(t)
             total += len(t) + 1
-    title = (script.get("title") or topic["topic"])[:100].replace("<", "").replace(">", "")
+    for h in cfg.get("hashtags", []):          # hashtag words also go in as search tags
+        w_ = h.lstrip("#")
+        if w_ and w_.lower() not in [x.lower() for x in tags] and total + len(w_) < 480:
+            tags.append(w_)
+            total += len(w_) + 1
+    title = (script.get("title") or topic["topic"]).replace("<", "").replace(">", "").strip()
+    extra = " ".join(cfg.get("title_hashtags", []))
+    title = (title[:100 - len(extra) - 1].rstrip() + " " + extra).strip() if extra else title[:100]
     desc = (script.get("description") or "") + DISCLOSURE + "\n\n" + build_hashtags(cfg, script)
 
     yt_cfg = cfg["youtube"]

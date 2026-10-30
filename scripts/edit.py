@@ -7,6 +7,7 @@
 Needs: build/script.json, build/render/{voice.wav,timings.json}. Writes build/final.mp4 and build/thumb.jpg.
 """
 import argparse
+import math
 import json
 import random
 import sys
@@ -15,10 +16,13 @@ from pathlib import Path
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from common import BUILD, ROOT, canvas, cover_crop, fail, is_shorts, load_config, log, sh  # noqa: E402
+from common import layout as get_layout  # noqa: E402
 from common import detect_face_center as detect_face_pil  # noqa: E402
 
 W, H, FPS = 1080, 1920, 25     # set from config.json in main(): Shorts are vertical 1080x1920
 SHORTS = True
+LAYOUT = "stage"           # stage | closeup | landscape
+PANEL_Y, PANEL_H, STRIP_Y, STRIP_H = 248, 1080, 1328, 592
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 MAX_CUTAWAYS = 10
 
@@ -52,7 +56,8 @@ def caption_events(text, start, end, maxc=34):
 
 def write_ass(timings, path):
     if SHORTS:      # big captions in the lower third, above the Shorts buttons and title
-        style = f"Style: Default,Noto Sans Devanagari,76,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,6,1,2,70,70,{int(H * 0.27)},1\n\n"
+        mv = (H - STRIP_Y + 30) if LAYOUT == "stage" else int(H * 0.27)
+        style = f"Style: Default,Noto Sans Devanagari,76,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,6,1,2,70,70,{mv},1\n\n"
         maxc = 20
     else:
         style = "Style: Default,Noto Sans Devanagari,58,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,1,2,80,80,70,1\n\n"
@@ -320,16 +325,213 @@ def make_thumbnail(final, script, out):
 
 
 # ---------------------------------------------------------------- main
+# ---------------------------------------------------------------- stage layout (comedian panel + live audience panel)
+SHOTS_S = {"wide": (1.00, 0.0), "medium": (1.12, 0.0), "medium_l": (1.15, -0.04), "medium_r": (1.15, 0.04), "close": (1.35, 0.0)}
+
+
+def _kb_clip(src_png, frames, out_mp4, variant, size, strong):
+    """Slow zoom/pan on a still picture for `frames` frames (the audience panel is never frozen)."""
+    zw, zh = size
+    rate = 0.0022 if strong else 0.0011
+    if variant == 0:
+        z, x = f"min(1.0+{rate}*on,1.35)", "iw/2-(iw/zoom/2)"
+    elif variant == 1:
+        z, x = f"max(1.35-{rate}*on,1.0)", "iw/2-(iw/zoom/2)"
+    elif variant == 2:
+        z, x = "1.2", f"(iw-iw/zoom)*on/{max(frames, 2)}"
+    else:
+        z, x = "1.2", f"(iw-iw/zoom)*(1-on/{max(frames, 2)})"
+    bright = "eq=brightness=0.04:saturation=1.1" if strong else "eq=brightness=-0.07:saturation=0.9"
+    # laughing faces bounce (about 3 shakes a second); the ambient crowd sways slowly
+    bounce = f"+11*sin(2*PI*on/{FPS}*3.1)" if strong else f"+4*sin(2*PI*on/{FPS}*0.45)"
+    sway = "+5*sin(2*PI*on/25*2.3)" if strong else ""
+    vf = (f"scale={int(zw * 1.8)}:-1,zoompan=z='{z}':x='{x}{sway}':y='ih/2-(ih/zoom/2){bounce}':d=1:s={zw}x{zh}:fps={FPS},"
+          f"{bright},setsar=1,format=yuv420p")
+    sh(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", str(FPS), "-i", str(src_png),
+        "-frames:v", str(max(frames, 2)), "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-r", str(FPS), "-g", str(FPS), str(out_mp4)], cwd=str(BUILD))
+
+
+def build_audience_strip(timings, total, seed):
+    """The live audience panel (W x STRIP_H): moving crowd shots; AI audience faces laughing during the laughs."""
+    files = sorted(p for p in (ROOT / "assets/cutaways").glob("*") if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"))
+    if not files:
+        log("[edit] no assets/cutaways images: the audience panel will be empty")
+        return None
+    from PIL import Image
+    rnd = random.Random(seed)
+    react = [p for p in files if p.name.startswith("react_")]
+    other = [p for p in files if not p.name.startswith("react_")]
+    rnd.shuffle(react)
+    rnd.shuffle(other)
+    laugh = [(sg["end"] + 0.10, sg["end"] + sg["pause"] + 0.15) for sg in timings["segments"] if sg["laugh"] and sg["pause"] >= 0.7]
+
+    def ambient(a, b):
+        if b - a < 0.2:
+            return []
+        n = max(1, int(math.ceil((b - a) / 5.0)))
+        step = (b - a) / n
+        return [(a + i * step, a + (i + 1) * step, "ambient") for i in range(n)]
+
+    pieces, t = [], 0.0
+    for a, b in laugh:
+        a = max(a, t)
+        if b - a < 0.4:
+            continue
+        pieces += ambient(t, a)
+        pieces.append((a, b, "react"))
+        t = b
+    pieces += ambient(t, total + 1.0)
+
+    ri = oi = 0
+    prepared, clips, last_end = {}, [], 0
+    for k, (a, b, kind) in enumerate(pieces):
+        pool = (react if (kind == "react" and react) else other) or react or other
+        if pool is react and kind == "react":
+            src, ri = pool[ri % len(pool)], ri + 1
+        else:
+            src, oi = pool[oi % len(pool)], oi + 1
+        key = str(src)
+        if key not in prepared:
+            im = Image.open(src).convert("RGB")
+            fx, fy = detect_face_pil(im, (0.5, 0.4)) if src.name.startswith("react_") else (0.5, 0.5)
+            png = BUILD / f"strip_src_{len(prepared)}.png"
+            cover_crop(im, W, STRIP_H, fx, fy).save(png)
+            prepared[key] = png
+        end_f = int(round(b * FPS))
+        frames = max(end_f - last_end, 2)
+        last_end += frames
+        clip = BUILD / f"strip_{k}.mp4"
+        _kb_clip(prepared[key], frames, clip, rnd.randint(0, 3), (W, STRIP_H), kind == "react")
+        clips.append(clip.name)
+    (BUILD / "strip_list.txt").write_text("".join(f"file '{c}'\n" for c in clips), encoding="utf-8")
+    sh(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", "strip_list.txt", "-c", "copy", "strip.mp4"], cwd=str(BUILD))
+    log(f"[edit] audience panel: {len(clips)} moving clips ({sum(1 for pc in pieces if pc[2] == 'react')} laughing-face moments)")
+    return BUILD / "strip.mp4"
+
+
+def stage_chain(shots, fx, fy, has_strip):
+    """Comedian panel (re-framed shots with a gentle camera drift) over a blurred stage background, audience panel below."""
+    n = len(shots)
+    parts = [f"[0:v]fps={FPS},setsar=1,tpad=stop_mode=clone:stop_duration=8,format=yuv420p,split={n + 1}[bgsrc]"
+             + "".join(f"[b{i}]" for i in range(n))]
+    parts.append(f"[bgsrc]crop=w='trunc(ih*{W}/{H}/2)*2':h=ih:x='(iw-ow)/2':y=0,scale={W}:{H},boxblur=22:3,"
+                 f"eq=brightness=-0.12:saturation=1.15,format=yuv420p[bg]")
+    for i, (t0, name) in enumerate(shots):
+        z, dx = SHOTS_S[name]
+        end = f":end={shots[i + 1][0]:.3f}" if i + 1 < n else ""
+        cx = min(max(fx + dx, 0.5 / z * 0.75), 1 - 0.5 / z * 0.75)
+        cy = min(max(fy + 0.03, 0.5 / z), 1 - 0.5 / z)
+        parts.append(
+            f"[b{i}]trim=start={t0:.3f}{end},setpts=PTS-STARTPTS,"
+            f"crop=w='trunc(ih/{z}*{W}/{PANEL_H}/2)*2':h='trunc(ih/{z}/2)*2':"
+            f"x='clip(iw*{cx:.4f}-ow/2+14*sin(2*PI*t/5.3),0,iw-ow)':y='clip(ih*{cy:.4f}-oh/2+9*sin(2*PI*t/4.1),0,ih-oh)',"
+            f"scale={W}:{PANEL_H}:flags=lanczos,setsar=1,format=yuv420p[c{i}]")
+    parts.append("".join(f"[c{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[fgc]")
+    # handheld camera: a slight over-scale, a tiny rolling tilt, then crop back (no black corners)
+    parts.append(f"[fgc]scale={int(W * 1.05) // 2 * 2}:{int(PANEL_H * 1.05) // 2 * 2},"
+                 f"rotate=a='0.010*sin(2*PI*t/3.9)+0.004*sin(2*PI*t/1.7)':ow=iw:oh=ih:c=black,"
+                 f"crop={W}:{PANEL_H}[fg]")
+    parts.append(f"[bg][fg]overlay=0:{PANEL_Y}[comp1]")
+    cur = "comp1"
+    if has_strip:
+        parts.append(f"[{cur}][1:v]overlay=0:{STRIP_Y}:eof_action=repeat[comp2]")
+        cur = "comp2"
+    parts.append(f"[{cur}]drawbox=x=0:y={PANEL_Y - 4}:w={W}:h=8:color=0xFFC21A@1:t=fill,"
+                 f"drawbox=x=0:y={STRIP_Y - 4}:w={W}:h=8:color=0xFFC21A@1:t=fill,"
+                 f"vignette=PI/4.5,eq=brightness='0.012*sin(2*PI*t/2.7)':eval=frame[comp3]")
+    return parts, "comp3"
+
+
+def render_stage(cfg, args, script, timings, total, seed, rdir):
+    global PANEL_Y, PANEL_H, STRIP_Y, STRIP_H
+    PANEL_H = 1000          # a wider-than-square comedian panel: face smaller, stage and shoulders visible
+    PANEL_Y = int(H * 0.13) // 2 * 2
+    STRIP_Y = PANEL_Y + PANEL_H
+    STRIP_H = H - STRIP_Y
+    write_ass(timings, BUILD / "captions.ass")
+    build_audio(timings, rdir / "voice.wav", BUILD / "mix.wav", [])
+
+    if args.mode == "lipsync":
+        talking = rdir / "talking.mp4"
+        if not talking.exists():
+            fail("talking.mp4 missing (lip-sync render did not produce it)")
+    else:
+        face = ROOT / "assets/comedian.png"
+        if not face.exists():
+            fail("assets/comedian.png missing")
+        from PIL import Image
+        vis = cfg.get("visuals", {})
+        im = Image.open(face).convert("RGB")
+        fx0, fy0 = detect_face_pil(im, (float(vis.get("face_x", 0.5)), float(vis.get("face_y", 0.42))))
+        cover_crop(im, 1280, 720, fx0, fy0).save(BUILD / "fallback_base.png")
+        talking = BUILD / "fallback_main.mp4"
+        sh(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", str(FPS), "-i", str(BUILD / "fallback_base.png"),
+            "-vf", f"scale=1536:864,zoompan=z='min(1.0+0.00008*on,1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1280x720:fps={FPS},format=yuv420p",
+            "-t", f"{total + 8:.1f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(talking)])
+
+    fx, fy = detect_face_center(talking, cfg)
+    shots = plan_shots(timings, seed) if cfg.get("visuals", {}).get("camera_cuts", True) else [(0.0, "wide")]
+    log(f"[edit] camera plan: {[(round(t, 1), n) for t, n in shots]}")
+    strip = build_audience_strip(timings, total, seed)
+    chain, cur = stage_chain(shots, fx, fy, strip is not None)
+
+    inputs = ["-i", str(talking)]
+    if strip is not None:
+        inputs += ["-i", str(strip)]
+    audio_idx = 2 if strip is not None else 1
+    inputs += ["-i", str(BUILD / "mix.wav")]
+
+    if Path(FONT_BOLD).exists():
+        hook = (script.get("thumb_text") or script.get("title") or "WAIT FOR IT").upper()
+        lines, cur_line = [], ""
+        for w_ in hook.split():
+            if cur_line and len(cur_line) + 1 + len(w_) > 12:
+                lines.append(cur_line)
+                cur_line = w_
+            else:
+                cur_line = (cur_line + " " + w_).strip()
+        lines.append(cur_line)
+        (BUILD / "intro.txt").write_text("\n".join(lines[:2]), encoding="utf-8")
+        (BUILD / "channel.txt").write_text(cfg["channel_name"], encoding="utf-8")
+        (BUILD / "outro.txt").write_text(cfg.get("shorts", {}).get("cta_text", "Follow for daily comedy"), encoding="utf-8")
+        (BUILD / "live.txt").write_text("\u25cf LIVE", encoding="utf-8")
+        chain.append(
+            f"[{cur}]drawtext=fontfile={FONT_BOLD}:textfile=live.txt:fontsize=44:fontcolor=0xFF3B30:borderw=4:"
+            f"bordercolor=black@0.8:x=w-text_w-36:y={PANEL_Y + 24}:enable='lt(mod(t,1.6),1.1)'[tl]")
+        cur = "tl"
+        chain.append(
+            f"[{cur}]drawtext=fontfile={FONT_BOLD}:textfile=intro.txt:fontsize=80:fontcolor=white:borderw=6:"
+            f"bordercolor=black@0.85:line_spacing=8:x=(w-text_w)/2:y=34:"
+            f"alpha='if(lt(t,0.25),t/0.25,if(lt(t,3.2),1,max(0,(3.6-t)/0.4)))'[t1]")
+        chain.append(
+            f"[t1]drawtext=fontfile={FONT_BOLD}:textfile=channel.txt:fontsize=62:fontcolor=white:borderw=5:"
+            f"bordercolor=black@0.85:x=(w-text_w)/2:y=80:enable='between(t,3.6,{max(total - 2.7, 4):.2f})'[t2]")
+        chain.append(
+            f"[t2]drawtext=fontfile={FONT_BOLD}:textfile=outro.txt:fontsize=58:fontcolor=0xFFC21A:borderw=5:"
+            f"bordercolor=black@0.85:x=(w-text_w)/2:y=84:enable='between(t,{max(total - 2.6, 4):.2f},{total - 0.1:.2f})'[t3]")
+        cur = "t3"
+    chain.append(f"[{cur}]subtitles=captions.ass:fontsdir=/usr/share/fonts[vout]")
+
+    final = BUILD / "final.mp4"
+    sh(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chain), "-map", "[vout]", "-map", f"{audio_idx}:a",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-r", str(FPS),
+        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-t", f"{total:.2f}", str(final)], cwd=str(BUILD))
+    mb = final.stat().st_size / 1e6
+    log(f"[edit] done: {final} ({mb:.1f} MB, {total:.0f}s, mode={args.mode}, layout=stage)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["lipsync", "fallback"], default="lipsync")
     ap.add_argument("--render-dir", default=str(BUILD / "render"))
     args = ap.parse_args()
     cfg = load_config()
-    global W, H, SHORTS
+    global W, H, SHORTS, LAYOUT
     W, H = canvas(cfg)
     SHORTS = is_shorts(cfg)
-    log(f"[edit] canvas {W}x{H} ({'Short' if SHORTS else 'landscape'})")
+    LAYOUT = get_layout(cfg)
+    log(f"[edit] canvas {W}x{H} (layout: {LAYOUT})")
     rdir = Path(args.render_dir)
 
     script = json.loads((BUILD / "script.json").read_text(encoding="utf-8"))
@@ -340,6 +542,9 @@ def main():
         fail("voice.wav missing")
 
     seed = date.today().toordinal()
+    if LAYOUT == "stage":
+        render_stage(cfg, args, script, timings, total, seed, rdir)
+        return
     write_ass(timings, BUILD / "captions.ass")
     windows = prepare_cutaways(timings, seed)
     build_audio(timings, voice, BUILD / "mix.wav", windows)

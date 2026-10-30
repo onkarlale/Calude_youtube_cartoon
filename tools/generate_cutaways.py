@@ -12,7 +12,7 @@ SCENES = [
     "wide shot of a small comedy club stage with a stool and a microphone stand, empty, spotlight, brick wall",
     "crowd seen from the side at a distance, people laughing and clapping, blurred faces, bokeh lights",
     "close-up of hands clapping in a dark comedy club, shallow depth of field, blurred background",
-    "table with drinks and chai glasses in a comedy club, blurred laughing audience in the background",
+    "table with chai cups and snacks in a comedy club, blurred laughing audience in the background",
     "back of a man's head and shoulders laughing, audience around him, warm stage light in the distance",
     "wide shot from the back of the room towards a brightly lit stage, audience silhouettes in the foreground",
     "group of friends laughing seen from behind at a comedy show, blurred, bokeh",
@@ -20,14 +20,14 @@ SCENES = [
 
 
 # Reaction shots: real-looking (AI) people with visible faces, laughing at the show.
-BASE_REACT = ("photorealistic candid photo, natural skin texture, sharp focus on the faces, shallow depth of field, "
+BASE_REACT = ("family friendly, no alcohol, no bottles, photorealistic candid photo, natural skin texture, sharp focus on the faces, shallow depth of field, "
               "dim comedy club, warm lighting, 35mm photograph, no text, no watermark")
 REACTION_SCENES = [
     "close-up of an Indian man in his thirties laughing out loud at a comedy show, eyes crinkled, blurred audience behind him",
     "close-up of an Indian woman laughing and clapping at a comedy club, joyful expression, warm bokeh lights",
     "middle-aged Indian man in a checked shirt laughing hard and wiping a tear, sitting at a table in a comedy club",
     "two young Indian friends laughing together at a comedy show, shoulders up, candid moment",
-    "group of four Indian friends at a table laughing hard, drinks in front of them, comedy club, medium shot",
+    "group of four Indian friends at a table laughing hard, popcorn and chai in front of them, comedy club, medium shot",
     "Indian man clapping with his head thrown back laughing, comedy club audience, candid",
     "young Indian woman covering her mouth while laughing, comedy club, candid close-up",
     "middle-aged Indian woman laughing and nudging her husband at a comedy show, candid medium shot",

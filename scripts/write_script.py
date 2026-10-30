@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Two-pass Groq comedy writer (draft, then punch-up). Writes build/script.json.
+"""Comedy writer: Gemini writes a draft, a punch-up, then a tough-audience rewrite (Groq is only a backup).
+Writes build/script.json.
 
-  python scripts/write_script.py            # real run (needs build/topic.json + GROQ key)
+  python scripts/write_script.py            # real run (needs build/topic.json + GEMINI_API_KEY)
   python scripts/write_script.py --sample   # no API: writes a short sample script for smoke tests
 """
 import argparse
@@ -15,6 +16,7 @@ import requests
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from common import BUILD, ROOT, fail, load_config, log  # noqa: E402
+from llm import gemini_available, gemini_chat, parse_json  # noqa: E402
 
 API = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -53,10 +55,7 @@ SAMPLE = {
 
 
 def groq_key():
-    k = os.environ.get("GROQ_API_KEY_CLAUDE") or os.environ.get("GROQ_API_KEY")
-    if not k:
-        fail("Set GROQ_API_KEY_CLAUDE (or GROQ_API_KEY).")
-    return k
+    return os.environ.get("GROQ_API_KEY_CLAUDE") or os.environ.get("GROQ_API_KEY") or ""
 
 
 PREFERRED = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "moonshotai/kimi-k2-instruct-0905",
@@ -88,19 +87,12 @@ def _candidates(first):
     return _state["candidates"]
 
 
-def _parse_json(text):
-    text = (text or "").strip()
-    text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.M).strip()
-    try:
-        return json.loads(text)
-    except ValueError:
-        i, j = text.find("{"), text.rfind("}")
-        if i >= 0 and j > i:
-            return json.loads(text[i:j + 1])
-        raise
+_parse_json = parse_json
 
 
-def chat(model, system, user, temperature):
+def groq_chat(model, system, user, temperature):
+    if not groq_key():
+        return None
     cands = [_state["model"]] if _state["model"] else _candidates(model)
     ci = 0
     use_json_mode = True
@@ -143,7 +135,25 @@ def chat(model, system, user, temperature):
             use_json_mode = False
             continue
         time.sleep(5 * (attempt + 1))
-    fail("Groq API kept failing (no usable model). Check the GROQ_API_KEY_CLAUDE secret and your Groq console.")
+    log("[writer] Groq backup failed too")
+    return None
+
+
+def chat(model, system, user, temperature):
+    """Ask the configured AI writers in order (Gemini first, Groq as backup). Returns a dict."""
+    scfg = load_config().get("script", {})
+    level = scfg.get("thinking", "medium")
+    for prov in scfg.get("providers", ["gemini", "groq"]):
+        if prov == "gemini" and gemini_available():
+            out = gemini_chat(system, user, temperature, thinking=level)
+            if out is not None:
+                return out
+            log("[writer] Gemini did not work on any model in GEMINI_MODELS")
+        elif prov == "groq" and groq_key():
+            out = groq_chat(model, system, user, temperature)
+            if out is not None:
+                return out
+    fail("No AI writer produced a script. Add the GEMINI_API_KEY secret (Google AI Studio key); GEMINI_MODELS is optional.")
 
 
 def count_words(script):
@@ -175,6 +185,55 @@ def normalize(script, cfg):
         segs.append({"text": text, "role": role, "pause_after_ms": pause, "laugh": laugh})
     script["segments"] = segs
     return script
+
+
+FAMILY_BANNED = [
+    "हरामी", "कमीना", "कमीने", "बकचोद", "चूतिया", "भोसड़ी", "गांड", "लौड़ा", "चोद", "सेक्स", "शराब", "दारू", "सिगरेट",
+    "नशा", "हनीमून", "सुहागरात", "harami", "kamina", "kameena", "bakchod", "chutiya", "gaand", "bhosd", "sex", "porn",
+    "condom", "drunk", "whisky", "vodka", "beer", "cigarette", "hangover", "suhaagraat", "honeymoon", "bedroom",
+]
+
+
+def family_hits(script):
+    blob = " ".join(sg["text"] for sg in script.get("segments", [])).lower()
+    return [w for w in FAMILY_BANNED if w.lower() in blob]
+
+
+STYLE_REFERENCE = """STYLE REFERENCE. This is a DIFFERENT topic. It shows only the RHYTHM, the live feel and the joke
+mechanics. Never reuse any of its jokes, its topic (the router) or its wording.
+[
+ {"text":"हाथ उठाओ, जिनके घर में कोई router को 'इंटरनेट का डिब्बा' बोलता है!","role":"aside"},
+ {"text":"मेरे पापा के लिए वो डिब्बा है, और डिब्बे की एक ही दवाई है: प्लग निकालो.","role":"setup"},
+ {"text":"फिर वो दस तक गिनते हैं, जैसे डिब्बे की नब्ज़ देख रहे हों.","role":"punch"},
+ {"text":"नेट बंद हो तो पापा बोलते हैं, 'बेटा, डिब्बा देखना.' मैं बोलता हूँ, 'पापा, बिल भरा है?'","role":"setup"},
+ {"text":"वो बोलते हैं, 'लाइट तो हरी जल रही है!' जैसे हरी लाइट मतलब ज़िंदगी सेट.","role":"punch"},
+ {"text":"आप हँस रहे हो? सच बोलो, आपके पापा भी यही करते हैं ना?","role":"aside"},
+ {"text":"फिर मैं कंपनी को फ़ोन करता हूँ. Customer care वाली मैडम बोलती हैं, 'सर, router restart करें.'","role":"setup"},
+ {"text":"पापा तुरंत बोले, 'देखा? मैडम भी मेरी तरफ़ हैं!'","role":"punch"},
+ {"text":"अब इस घर में नेट ठीक करने के तीन तरीके हैं: प्लग निकालना, प्लग लगाना, और मुझे बुलाना.","role":"setup"},
+ {"text":"और तीसरे में सबसे ज़्यादा टाइम लगता है, क्योंकि मैं office में हूँ.","role":"punch"},
+ {"text":"कल मैंने उन्हें समझाया, 'पापा, WiFi हवा में चलता है.'","role":"setup"},
+ {"text":"बोले, 'हवा में चलता है तो पीछे तार क्यों लगा है?' मेरे पास जवाब नहीं था.","role":"punch"},
+ {"text":"नहीं नहीं, रुको, यह तो कुछ नहीं. सुनो आगे.","role":"aside"},
+ {"text":"आज सुबह पूछते हैं, 'डिब्बे का password क्या है?' मैंने कहा, 'पापा, आपने ही रखा था.'","role":"setup"},
+ {"text":"बोले, 'हाँ, तभी तो भूल गया!' तो अगली बार कोई 'डिब्बा' बोले, समझ जाना, घर में एक पापा हैं.","role":"punch"}
+]
+Notice: it opens by talking to the room; every setup is 1 or 2 short sentences; the surprise word is last; Dad's
+dialogue is acted out; there is a rule of three with a twist; the final line calls back to the first.
+"""
+
+CRAFT = (
+    "COMEDY CRAFT TOOLBOX (use at least five of these): MISDIRECTION (lead the audience one way, land somewhere else); "
+    "SPECIFICITY (a number, a name, an exact object beats a general word); RULE OF THREE with a twist on the third; "
+    "ACT-OUT (let two or three voices argue); ESCALATION (each beat is bigger and weirder than the last); SELF-ROAST "
+    "(Raj is the fool, not the audience); CALLBACK (return to an earlier line with a new meaning); TAG (a second punch on "
+    "the same joke right after the laugh); REVERSAL (the confident person is wrong); EXAGGERATION to an absurd scale; "
+    "UNDERSTATEMENT after a big claim.\n"
+    "FIND THE FRESH ANGLE: the topic is only a seed. Do not make the first joke everyone makes. Look for the specific, "
+    "slightly odd detail that makes an Indian family or office nod and say 'haan, yehi hota hai'.\n"
+    "SELF-CHECK before you answer: read every line out loud. Does it sound SAID, not written? Is the surprise the LAST "
+    "word of every punch line? Is there a joke, a reaction or a question in every group of 3 lines? Fix anything that fails.\n"
+)
 
 
 STORY_MARKERS = [
@@ -227,7 +286,15 @@ ADULT_RULES = (
     "HARD LIMITS (never): jokes that attack a religion, caste, region, gender, disability or sexuality; slurs; sexual "
     "content involving minors or without consent; real named people; politics, elections or tragedies; self-harm.\n"
 )
-CLEAN_RULES = "Keep it family friendly: no swearing, no sexual content.\n"
+TEEN_RULES = (
+    "AUDIENCE: EVERYONE, 13 and older, parents and teenagers watching together. Make the whole family laugh. "
+    "Warm, relatable, clever humour about family, relatives, school and college, office life, phones, food, traffic, "
+    "money (EMI, salary), weddings, neighbours, WhatsApp groups, travel and everyday embarrassment. Roast situations and "
+    "Raj himself, never people. NEVER: swearing or insults (not even mild words like saala, kameena, harami), sexual "
+    "content or innuendo, dating-bedroom jokes, alcohol, drugs or smoking jokes, violence, anything cruel, scary or "
+    "gross, or jokes that attack a religion, caste, region, gender, disability or sexuality. No politics, no real named people.\n"
+)
+CLEAN_RULES = TEEN_RULES
 
 SHORTS_RULES = (
     "THIS IS A VERTICAL YOUTUBE SHORT told in 2 to 2.5 minutes of speech. Retention is everything:\n"
@@ -245,7 +312,7 @@ def build_prompts(cfg, topic, recent):
     character = (ROOT / "assets/character.md").read_text(encoding="utf-8")
     lo, hi = cfg["script"]["min_words"], cfg["script"]["max_words"]
     shorts = cfg.get("format", "shorts") == "shorts"
-    ADULT_RULES_USED = ADULT_RULES if cfg.get("audience", "adult") == "adult" else CLEAN_RULES
+    ADULT_RULES_USED = ADULT_RULES if cfg.get("audience", "teen") == "adult" else TEEN_RULES
     system = (
         "You are the head writer AND live-show director for Raj, a stand-up comedian performing in a small comedy "
         "club in front of a packed, laughing crowd. You write ONLY what Raj says out loud on stage. This is a "
@@ -270,8 +337,9 @@ def build_prompts(cfg, topic, recent):
         + ("End on the biggest laugh that calls back to the first line. No sign-off.\n" if shorts else
            "End on the biggest laugh, then one tiny sign-off aside (8 words max, for example \"Main Raj, aap sab ka shukriya, good night!\").\n") +
         "10. NEVER write stage directions, brackets, asterisks, emojis, hashtags or speaker labels. Only spoken words.\n"
-        + ADULT_RULES_USED + (SHORTS_RULES if shorts else "") +
+        + CRAFT + ADULT_RULES_USED + (SHORTS_RULES if shorts else "") +
         "Output JSON only.\n\n"
+        f"{STYLE_REFERENCE}\n"
         f"CHARACTER BIBLE:\n{character}"
     )
     avoid = "\n".join(f"- {r}" for r in recent) or "- (none yet)"
@@ -297,6 +365,8 @@ def punch_up_prompt(cfg, draft_json):
     shorts = cfg.get("format", "shorts") == "shorts"
     return (
         "You are the script doctor. Rewrite this draft so it performs like a LIVE stand-up set, then punch it up.\n"
+        + ("Keep it suitable for ages 13+ and the whole family: no swearing, no sexual or alcohol jokes, nothing cruel.\n"
+           if cfg.get("audience", "teen") != "adult" else "") +
         "LIVE PASS (most important):\n"
         "- Turn every piece of narration into in-the-moment performance: present tense, acted-out dialogue, direct address.\n"
         "- Delete story openers, summaries, explanations of jokes and any moral.\n"
@@ -319,6 +389,60 @@ def punch_up_prompt(cfg, draft_json):
         f"DRAFT:\n{json.dumps(draft_json, ensure_ascii=False)}\n\n{SCHEMA}\n"
         "Plus the extra keys title, description, tags, thumb_text in the same JSON object."
     )
+
+
+def crowd_test_prompt(cfg, segments_json):
+    lo, hi = cfg["script"]["min_words"], cfg["script"]["max_words"]
+    family = cfg.get("audience", "teen") != "adult"
+    return (
+        "You are a TOUGH comedy-club audience of 200 people AND a ruthless comedy editor. Below is the spoken set "
+        "(Hinglish) that Raj will perform. Step 1: for every line, decide honestly whether it gets a BIG laugh, a smile, "
+        "nothing, or confusion. Step 2: rewrite EVERY line that will not get at least a smile, every line that sounds "
+        "written instead of spoken, every setup that is too slow, and every punch line whose last word is not the surprise. "
+        "Keep the lines that already work word for word.\n"
+        "RULES: keep the opening line's job (a scroll-stopping hook) and keep the final line calling back to the first. "
+        "Keep the acted-out dialogue, the crowd-work questions and the same JSON shape. "
+        f"Keep the total between {lo} and {hi} words and 22 to 30 segments. Punch lines stay at 14 words or fewer. "
+        + ("Keep it family friendly (ages 13+): no swearing, no sexual, alcohol or cruel jokes. " if family else "")
+        + "No story openers ('ek din'), no morals, no explanations of jokes, no stage directions.\n\n"
+        f"SET:\n{json.dumps(segments_json, ensure_ascii=False)}\n\n{SCHEMA}"
+    )
+
+
+def crowd_test(cfg, system, final, model, before_problems):
+    """Third pass: rewrite the lines a tough audience would not laugh at. Keeps the old script if the rewrite is worse."""
+    log("[writer] tough-audience rewrite")
+    try:
+        out = chat(model, system, crowd_test_prompt(cfg, {"segments": final["segments"]}), 0.9)
+    except SystemExit:
+        log("[writer] tough-audience pass unavailable; keeping the punched-up script")
+        return final
+    cand = normalize({"segments": (out or {}).get("segments", [])}, cfg)
+    segs = cand["segments"]
+    lo, hi = cfg["script"]["min_words"], cfg["script"]["max_words"]
+    candidate = dict(final)
+    candidate["segments"] = segs
+    words = count_words(candidate)
+    cap = cfg.get("shorts", {}).get("max_seconds", 175) if cfg.get("format", "shorts") == "shorts" else None
+    bad = []
+    if not (18 <= len(segs) <= 34):
+        bad.append(f"{len(segs)} segments")
+    if words < lo - 40 or words > hi + 50:
+        bad.append(f"{words} words")
+    if banned_hit(candidate):
+        bad.append("banned words")
+    if cfg.get("audience", "teen") != "adult" and family_hits(candidate):
+        bad.append("adult words")
+    if cap and estimate_seconds(candidate, cfg) > cap * 1.12:
+        bad.append("too long")
+    if len(style_problems(candidate)) > len(before_problems):
+        bad.append("sounds more like a story")
+    if bad:
+        log(f"[writer] rewrite rejected ({', '.join(bad)}); keeping the punched-up script")
+        return final
+    changed = sum(1 for a, b in zip(final["segments"], segs) if a["text"] != b["text"])
+    log(f"[writer] tough-audience rewrite accepted ({changed} lines changed, {words} words)")
+    return candidate
 
 
 def main():
@@ -357,6 +481,10 @@ def main():
             problems.append(f"word count {words} is outside {lo}-{hi}")
         if hits:
             problems.append(f"remove these forbidden words/topics: {hits}")
+        if cfg.get("audience", "teen") != "adult":
+            fam = family_hits(final)
+            if fam:
+                problems.append(f"remove adult/swearing words (the show is for ages 13+ and the whole family): {fam}")
         est = estimate_seconds(final, cfg)
         cap = cfg.get("shorts", {}).get("max_seconds", 175) if cfg.get("format", "shorts") == "shorts" else None
         if cap and est > cap * 1.12:
@@ -374,6 +502,9 @@ def main():
     else:
         fail("Could not get an acceptable script after 4 attempts.")
 
+    if cfg.get("script", {}).get("crowd_test", True):
+        final = crowd_test(cfg, system, final, model, style_problems(final))
+        words = count_words(final)
     final["title"] = (final.get("title") or topic["topic"])[:95]
     final["description"] = final.get("description") or ""
     final["tags"] = [str(t)[:30] for t in (final.get("tags") or [])][:12]

@@ -2,7 +2,7 @@
 """Orchestrates the whole daily pipeline with retry + fallback.
 
   python scripts/run_daily.py                  # normal daily run
-  python scripts/run_daily.py --smoke          # sample script (no Groq), always uploads PRIVATE
+  python scripts/run_daily.py --smoke          # sample script (no AI writer), always uploads PRIVATE
   python scripts/run_daily.py --no-upload      # build the video only
   python scripts/run_daily.py --skip-lipsync   # force the fallback video (no Kaggle)
 """
@@ -44,7 +44,7 @@ def main():
             sys.exit("sample script failed")
     else:
         if step(S / "topic.py") or step(S / "write_script.py"):
-            sys.exit("topic/script stage failed (Groq down or rejected?). Nothing to publish today.")
+            sys.exit("topic/script stage failed (Gemini/Groq down, key missing or rejected?). Nothing to publish today.")
 
     # 2. render: Kaggle lip-sync (retry once), else fallback voice+image video
     mode = "fallback"

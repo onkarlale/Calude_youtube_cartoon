@@ -43,9 +43,14 @@ def canvas(cfg):
     return 1920, 1080
 
 
+def layout(cfg):
+    """'landscape' | 'stage' (comedian panel + live audience panel) | 'closeup' (vertical, face fills the screen)."""
+    return cfg.get("shorts", {}).get("layout", "stage") if is_shorts(cfg) else "landscape"
+
+
 def base_size(cfg):
-    """Size of the lip-sync base video (smaller than the final video, upscaled in the edit)."""
-    return (720, 1280) if is_shorts(cfg) else (1280, 720)
+    """Size of the lip-sync base video (upscaled/re-framed later in the edit)."""
+    return (720, 1280) if layout(cfg) == "closeup" else (1280, 720)
 
 
 def detect_face_center(img, default=(0.5, 0.42)):

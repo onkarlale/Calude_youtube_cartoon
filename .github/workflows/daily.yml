@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       smoke_test:
-        description: "Smoke test: built-in sample script, no Groq, uploads PRIVATE"
+        description: "Smoke test: built-in sample script, no AI writer, uploads PRIVATE"
         type: boolean
         default: false
       skip_lipsync:
@@ -78,6 +78,9 @@ jobs:
 
       - name: Run pipeline
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GEMINI_MODELS: ${{ vars.GEMINI_MODELS }}
           GROQ_API_KEY_CLAUDE: ${{ secrets.GROQ_API_KEY_CLAUDE }}
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}

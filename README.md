@@ -1,6 +1,6 @@
 # Automated Hindi AI Stand-up Comedy Channel (100% free tools, 100% GitHub Actions)
 
-Every day at 08:00 IST, GitHub Actions: picks a topic -> Groq writes a 2-3 minute Hinglish set (draft + punch-up) ->
+Every day at 08:00 IST, GitHub Actions: picks a topic -> Gemini writes a 2-3 minute Hinglish set (draft, punch-up, then a tough-audience rewrite) ->
 Kaggle's free GPU makes the lip-synced talking head (MuseTalk) -> FFmpeg adds audience cutaways, laugh track,
 captions, intro/outro -> uploads to YouTube. If the GPU step fails twice, a simpler voice+image video is published.
 
@@ -12,7 +12,7 @@ Cloudflare key and commits them to the repo, so Raj looks the same in every epis
    `.github/workflows/assets.yml` if it is still there).
 2. Settings -> Actions -> General -> Workflow permissions -> **Read and write**.
 3. Secrets needed (Settings -> Secrets and variables -> Actions):
-   `GROQ_API_KEY_CLAUDE`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `KAGGLE_USERNAME`,
+   `GEMINI_API_KEY` (a free key from Google AI Studio; `GROQ_API_KEY_CLAUDE` is now only an optional backup), `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `KAGGLE_USERNAME`,
    `KAGGLE_KEY` (the `key` value from kaggle.json; if Kaggle gave you a new-style token starting with `KGAT_`, save it as
    `KAGGLE_API_TOKEN` instead), `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`.
    `YOUR_CLIENT_ID` is not used. The YouTube client ID/secret must be the same ones used to create the refresh token.
@@ -60,11 +60,27 @@ Send me the log lines and I will patch `kernel/render.py`.
 
 ## YouTube Shorts mode (default)
 `config.json` has `"format": "shorts"`: every episode is a vertical 1080x1920 video of about 2 to 2.9 minutes, capped at
-175 seconds (YouTube treats vertical videos up to 3 minutes as Shorts). The voice is automatically sped up a little if a set
-runs long. Set `"format": "landscape"` to go back to normal 16:9 videos.
-- **Built for retention:** a scroll-stopping first line, a laugh every 10 to 12 seconds, big captions in the lower third,
-  an on-screen hook banner in the first 3 seconds, no sign-off, and a last line that calls back to the first so it loops.
-- **18+ humour:** `"audience": "adult"` allows adult comedy (dating, marriage, innuendo, mild swearing). Hard limits stay:
-  no hate or slurs, no explicit sexual content, no politics, no religion/caste jokes, no real named people. Set
-  `"audience": "clean"` for a family-friendly version. YouTube may age-restrict or limit ads on adult content.
-- **#Shorts** is added to every description automatically. Shorts have no custom thumbnail.
+175 seconds (YouTube treats vertical videos up to 3 minutes as Shorts). The voice is sped up a little automatically if a set runs long.
+- **Layout `"stage"` (default):** the comedian sits in a stage panel (face smaller, stage and shoulders visible, a gentle camera
+  drift and cuts between wide, medium and close shots). Below him is a live audience panel with moving crowd shots; AI audience
+  faces laughing appear during the laughs. The background is a darkened, blurred copy of the stage. Set
+  `"layout": "closeup"` under `"shorts"` for the older look where his face fills the whole screen.
+- **Built for retention:** a scroll-stopping first line, a laugh every 10 to 12 seconds, big captions, an on-screen hook banner in
+  the first 3 seconds, no sign-off, and a last line that calls back to the first so it loops.
+- **Audience setting:** `"audience": "teen"` (default) writes for ages 13+ and the whole family: no swearing, no sexual or
+  alcohol jokes. `"adult"` allows 18+ humour (innuendo, mild swearing). Hard limits always apply: no hate or slurs, no politics,
+  no religion/caste jokes, no real named people. The writer rejects scripts that contain swearing or adult words in teen mode.
+- **Hashtags:** up to 14 in the description (`"hashtags"` in `config.json` plus topical ones from each episode), `#Shorts #HindiComedy`
+  added to the title (`"title_hashtags"`), and the same words added as search tags. YouTube ignores ALL hashtags if there are more than 15.
+- Shorts have no custom thumbnail. Audience pictures: delete any you dislike from `assets/cutaways/`; pictures named `react_XX.png` are the laughing faces.
+
+## The AI writer (Gemini)
+- Secret: **`GEMINI_API_KEY`** (Settings -> Secrets and variables -> Actions -> Secrets). Optional repository **variable** `GEMINI_MODELS`
+  (same page, Variables tab), a comma-separated list tried in order. Default:
+  `gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-2.5-flash`.
+  A model that is missing, not allowed for your key, rate-limited or blocked is skipped and the next one is used.
+- Three passes: draft, punch-up, then a "tough audience" rewrite that replaces lines that would not get a laugh. A script is
+  rejected and rewritten if it sounds like a story, does not talk to the audience, is too long for a Short, or has adult words
+  in 13+ mode. `config.json` -> `"script"` has `providers` (default `["gemini","groq"]`), `thinking` and `crowd_test`.
+- Movement: the comedian panel has a handheld camera sway and cuts, the laughing audience faces bounce, the crowd sways,
+  and a LIVE badge blinks. Real laughter/applause recordings in `assets/sfx/` (names starting `laugh` / `applause`) make it sound much more real.
