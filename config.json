@@ -4,12 +4,16 @@
   "privacy": "public",
   "fallback_upload": false,
   "visuals": {
-    "base_mode": "rotate",
+    "base_mode": "single",
     "base_pick": "random",
     "face_pool": 6,
     "camera_cuts": true,
     "face_x": 0.5,
-    "face_y": 0.42
+    "face_y": 0.2,
+    "body_pool": 4,
+    "cutaways": true,
+    "cutaway_max": 6,
+    "cutaway_seconds": 1.6
   },
   "voice": {
     "engine": "edge",
@@ -22,9 +26,20 @@
     "pitch": "+0Hz"
   },
   "timing": {
-    "lead_ms": 500,
-    "tail_ms": 1200,
-    "min_laugh_pause_ms": 900
+    "lead_ms": 600,
+    "tail_ms": 3200,
+    "min_laugh_pause_ms": 1800,
+    "laugh_pause_min_ms": 1800,
+    "laugh_pause_max_ms": 2900,
+    "setup_pause_ms": [
+      300,
+      550
+    ],
+    "beat_ms": [
+      450,
+      750
+    ],
+    "chuckle_pause_ms": 1000
   },
   "script": {
     "model": "openai/gpt-oss-120b",
@@ -69,8 +84,9 @@
     "height": 1920,
     "max_seconds": 175,
     "cta_text": "Follow for daily comedy",
-    "layout": "full",
-    "framing": "wide"
+    "layout": "scene",
+    "framing": "wide",
+    "caption_margin": 270
   },
   "title_hashtags": [
     "#Shorts",

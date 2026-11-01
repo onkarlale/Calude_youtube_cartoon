@@ -172,7 +172,59 @@ def make_reactions(target=8):
         print(f"[bootstrap] audience reaction {have}/{target}", flush=True)
 
 
+BODIES = ROOT / "assets" / "bodies"
+
+
+def make_bodies(target):
+    """Full-body 9:16 pictures of Raj on stage, audience silhouettes along the bottom (legs and shoes visible).
+    Saved as assets/bodies/body_01.png ... ; body_01.png is the one used when visuals.base_mode is "single"."""
+    cv2, det = detector()
+    BODIES.mkdir(parents=True, exist_ok=True)
+    have = len(list(BODIES.glob("body_*.png")))
+    attempts = 0
+    while have < target and attempts < target * 4:
+        outfit, backdrop = LOOKS[(have + attempts) % len(LOOKS)]
+        attempts += 1
+        prompt = gf.BODY_PROMPT.format(outfit=outfit, backdrop=backdrop)
+        im = cf_image.generate(prompt, size=(768, 1344))
+        if im is None:
+            continue
+        im = cf_image.crop_916(im, 1080, 1920)
+        if cv2 is not None:
+            import numpy as np
+            g = cv2.cvtColor(np.array(im), cv2.COLOR_RGB2GRAY)
+            faces = det.detectMultiScale(g, 1.1, 5, minSize=(26, 26))
+            if len(faces) > 1:
+                print("[bootstrap] body rejected (more than one face)", flush=True)
+                continue
+            if len(faces) == 1:
+                x, y, w, h = faces[0]
+                if y > 0.45 * 1920 or abs((x + w / 2) / 1080 - 0.5) > 0.25:
+                    print("[bootstrap] body rejected (face too low or off-centre: probably not a standing full-body picture)", flush=True)
+                    continue
+        have += 1
+        im.save(BODIES / f"body_{have:02d}.png")
+        print(f"[bootstrap] full-body picture {have}/{target}", flush=True)
+    if have == 0:
+        sys.exit("Could not create any full-body picture (check CLOUDFLARE_* secrets / quota).")
+
+
 def main():
+    try:
+        import json as _j
+        _cfg = _j.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        _cfg = {}
+    if _cfg.get("shorts", {}).get("layout") == "scene":
+        if os.environ.get("FORCE_FACE") == "1":
+            for old in BODIES.glob("body_*.png"):
+                old.unlink()
+        make_bodies(int(_cfg.get("visuals", {}).get("body_pool", 4)))
+        if len(list(CUT.glob("react_*.png"))) < 8:
+            make_reactions(8)
+        else:
+            print("[bootstrap] audience reaction pictures exist, skipping", flush=True)
+        return
     if os.environ.get("FORCE_FACE") == "1" and FACE.exists():
         FACE.unlink()
     if not FACE.exists():

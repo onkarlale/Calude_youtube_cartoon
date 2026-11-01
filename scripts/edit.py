@@ -21,10 +21,11 @@ from common import detect_face_center as detect_face_pil  # noqa: E402
 
 W, H, FPS = 1080, 1920, 25     # set from config.json in main(): Shorts are vertical 1080x1920
 SHORTS = True
-LAYOUT = "stage"           # stage | closeup | landscape
+LAYOUT = "stage"           # scene | stage | full | closeup | landscape
 PANEL_Y, PANEL_H, STRIP_Y, STRIP_H = 248, 1080, 1328, 592
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 MAX_CUTAWAYS = 10
+CAPTION_MARGIN = 270
 
 
 # ---------------------------------------------------------------- captions
@@ -57,7 +58,10 @@ def caption_events(text, start, end, maxc=34):
 def write_ass(timings, path):
     if SHORTS:      # big captions in the lower third, above the Shorts buttons and title
         mv = (H - STRIP_Y + (60 if LAYOUT == "full" else 30)) if LAYOUT in ("stage", "full") else int(H * 0.27)
-        style = f"Style: Default,Noto Sans Devanagari,76,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,6,1,2,70,70,{mv},1\n\n"
+        fs = 76
+        if LAYOUT == "scene":      # low, over the audience area, so Raj's legs stay visible
+            mv, fs = int(CAPTION_MARGIN), 68
+        style = f"Style: Default,Noto Sans Devanagari,{fs},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,6,1,2,70,70,{mv},1\n\n"
         maxc = 20
     else:
         style = "Style: Default,Noto Sans Devanagari,58,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,1,2,80,80,70,1\n\n"
@@ -83,7 +87,58 @@ def real_samples(prefix):
     return sorted(p for p in d.glob(f"{prefix}*") if p.suffix.lower() in (".mp3", ".wav", ".ogg", ".m4a"))
 
 
-def make_laugh(path, dur, seed):
+def synth_crowd_laugh(path, dur, seed, big=True, sr=24000):
+    """A crowd laughing, built from many separate 'voices'. Each voice is a pitched, breathy 'ha-ha-ha' pulse train
+    (vowel formants, falling pitch, vibrato) that slows and fades; the voices join at slightly different moments.
+    This is the fallback when assets/sfx has no real laugh recordings (those are always used when present)."""
+    import wave
+    import numpy as np
+    rnd = np.random.default_rng(seed)
+    n = int(dur * sr)
+    mix = np.zeros(n)
+    voices = int(rnd.integers(12, 18)) if big else int(rnd.integers(3, 6))
+    for _ in range(voices):
+        onset = float(rnd.uniform(0.0, min(0.7, dur * 0.3)))
+        life = float(rnd.uniform(0.55, 0.95)) * (dur - onset)
+        if life < 0.35:
+            continue
+        f0 = float(rnd.uniform(95, 150)) if rnd.random() < 0.5 else float(rnd.uniform(170, 290))
+        rate = float(rnd.uniform(3.8, 6.2))
+        tt = np.arange(int(life * sr)) / sr
+        slow = 2 * np.pi * (rate * tt - 0.30 * rate * tt ** 2 / max(life, 0.6))      # the laugh slows down as it dies
+        bursts = (0.5 + 0.5 * np.sin(slow - np.pi / 2)) ** 2.2
+        env = bursts * np.clip(tt / 0.10, 0, 1) * np.exp(-tt / (life * 0.6))
+        f = f0 * (1 + 0.22 * np.exp(-tt / 0.35)) * (1 + 0.012 * np.sin(2 * np.pi * 5.5 * tt + rnd.uniform(0, 6)))
+        phase = 2 * np.pi * np.cumsum(f) / sr
+        src = np.zeros_like(tt)
+        for k in range(1, 16):
+            fk = k * f0
+            if fk > 5500:
+                break
+            g = (np.exp(-((fk - 750) / 320) ** 2) + 0.8 * np.exp(-((fk - 1250) / 420) ** 2)
+                 + 0.35 * np.exp(-((fk - 2700) / 700) ** 2) + 0.04)
+            src += g / k ** 0.6 * np.sin(k * phase)
+        src /= max(np.abs(src).max(), 1e-6)
+        breath = np.diff(rnd.standard_normal(len(tt)), prepend=0.0)     # high-passed hiss = breathiness
+        breath /= max(np.abs(breath).max(), 1e-6)
+        v = (0.85 * src + 0.22 * breath) * env * float(rnd.uniform(0.5, 1.0))
+        a = int(onset * sr)
+        mix[a:a + len(v)] += v[:max(n - a, 0)]
+    if big:      # the room itself: a soft, swelling wash of many people
+        bed = np.convolve(rnd.standard_normal(n), np.ones(5) / 5, mode="same")
+        swell = np.clip(np.arange(n) / sr / 0.25, 0, 1) * np.exp(-np.arange(n) / sr / (dur * 0.7))
+        mix += 0.10 * bed * swell * np.abs(mix).max()
+    t = np.arange(n) / sr
+    mix *= np.clip(t / 0.06, 0, 1) * np.clip((dur - t) / min(0.9, dur * 0.4), 0, 1)
+    mix = mix / max(np.abs(mix).max(), 1e-6) * 0.9
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes((mix * 32767).astype("<i2").tobytes())
+
+
+def make_laugh(path, dur, seed, big=True):
     rnd = random.Random(seed)
     samples = real_samples("laugh")
     if samples:
@@ -91,12 +146,7 @@ def make_laugh(path, dur, seed):
         sh(["ffmpeg", "-y", "-i", str(src), "-t", f"{dur:.2f}", "-af",
             f"afade=t=in:d=0.1,afade=t=out:st={max(dur - 0.5, 0.1):.2f}:d=0.5", "-ar", "48000", "-ac", "1", str(path)])
         return
-    f = rnd.uniform(5.5, 8.5)
-    lo, hi = rnd.randint(250, 450), rnd.randint(2800, 4200)
-    af = (f"highpass=f={lo},lowpass=f={hi},tremolo=f={f:.1f}:d=0.75,"
-          f"afade=t=in:st=0:d=0.25,afade=t=out:st={max(dur - 0.7, 0.1):.2f}:d=0.7,volume=1.6")
-    sh(["ffmpeg", "-y", "-f", "lavfi", "-i", f"anoisesrc=d={dur:.2f}:c=pink:r=48000:a=0.5:s={seed}",
-        "-af", af, "-ac", "1", str(path)])
+    synth_crowd_laugh(path, dur, seed, big)
 
 
 def make_applause(path, dur):
@@ -134,22 +184,30 @@ def build_audio(timings, voice, out_wav, windows):
     p = BUILD / "sfx_applause_end.wav"
     make_applause(p, 3.4)
     last = timings["segments"][-1]
-    add(p, last["end"] + 0.35, 0.55)
+    add(p, last["end"] + 0.35, 0.6)
 
-    # laugh after every punchline
-    for k, seg in enumerate(s for s in timings["segments"] if s["laugh"]):
-        dur = min(seg["pause"] + 0.5, 3.0)
+    # the room laughs after every punchline: it starts a moment AFTER the line lands (people need a beat to get it),
+    # is loud enough to feel like a real crowd, and its tail runs under the start of the next line
+    segs = timings["segments"]
+    for k, seg in enumerate(s_ for s_ in segs if s_["laugh"]):
+        rnd = random.Random(k * 7 + 3)
+        big = seg["pause"] >= 1.9
+        dur = min(seg["pause"] + 0.9, 4.2)
         p = BUILD / f"sfx_laugh_{k}.wav"
-        make_laugh(p, dur, seed=k + 11)
-        add(p, seg["end"] + 0.12, round(random.Random(k).uniform(0.28, 0.42), 2))
+        make_laugh(p, dur, seed=k + 11, big=big)
+        add(p, seg["end"] + rnd.uniform(0.10, 0.28), round(rnd.uniform(0.62, 0.78) if big else 0.5, 2))
+    for k, seg in enumerate(s_ for s_ in segs if s_.get("chuckle")):
+        p = BUILD / f"sfx_chuckle_{k}.wav"          # the room murmurs / chuckles at a question or a small joke
+        make_laugh(p, min(seg["pause"] + 0.4, 2.0), seed=k + 101, big=False)
+        add(p, seg["end"] + 0.25, 0.38)
 
     # quiet room tone
     inputs.extend(["-f", "lavfi", "-i", f"anoisesrc=d={total:.2f}:c=brown:r=48000:a=0.3:s=3"])
-    filters.append(f"[{idx}:a]lowpass=f=600,volume=0.05[a{idx}]")
+    filters.append(f"[{idx}:a]lowpass=f=600,volume=0.07[a{idx}]")
     labels.append(f"[a{idx}]")
 
     filters.append(f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0:duration=first,"
-                   f"loudnorm=I=-14:TP=-1.5:LRA=11[mix]")
+                   f"alimiter=limit=0.95,loudnorm=I=-14:TP=-1.5:LRA=11[mix]")
     sh(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(filters), "-map", "[mix]",
         "-t", f"{total:.2f}", "-ar", "48000", "-ac", "2", str(out_wav)])
 
@@ -589,6 +647,152 @@ def render_stage(cfg, args, script, timings, total, seed, rdir):
     log(f"[edit] done: {final} ({mb:.1f} MB, {total:.0f}s, mode={args.mode}, layout={LAYOUT})")
 
 
+# ---------------------------------------------------------------- scene layout (full-body picture, audience inside the picture)
+# Gentle zooms only: Raj's legs and shoes must stay in the frame. (zoom, horizontal offset)
+SHOTS_SCENE = {"wide": (1.00, 0.0), "medium": (1.05, 0.0), "medium_l": (1.07, -0.02), "medium_r": (1.07, 0.02), "close": (1.10, 0.0)}
+
+
+def body_pool():
+    exts = (".png", ".jpg", ".jpeg", ".webp")
+    return sorted(p for p in (ROOT / "assets/bodies").glob("*") if p.suffix.lower() in exts)
+
+
+def scene_chain(shots):
+    """One full-screen picture. Re-framed per shot (gentle push-ins), slow handheld drift, no side panels."""
+    n = len(shots)
+    parts = [f"[0:v]fps={FPS},setsar=1,tpad=stop_mode=clone:stop_duration=8,format=yuv420p,split={n}"
+             + "".join(f"[b{i}]" for i in range(n))]
+    for i, (t0, name) in enumerate(shots):
+        z, dx = SHOTS_SCENE[name]
+        end = f":end={shots[i + 1][0]:.3f}" if i + 1 < n else ""
+        cx = min(max(0.5 + dx, 0.5 / z), 1 - 0.5 / z)
+        parts.append(
+            f"[b{i}]trim=start={t0:.3f}{end},setpts=PTS-STARTPTS,"
+            f"crop=w='trunc(iw/{z}/2)*2':h='trunc(ih/{z}/2)*2':"
+            f"x='clip(iw*{cx:.4f}-ow/2+9*sin(2*PI*t/5.3),0,iw-ow)':y='clip(ih*0.5-oh/2+6*sin(2*PI*t/4.1),0,ih-oh)',"
+            f"scale={W}:{H}:flags=lanczos,setsar=1,format=yuv420p[c{i}]")
+    parts.append("".join(f"[c{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[v0]")
+    return parts
+
+
+def scene_cutaways(timings, seed, cfg):
+    """A few SHORT full-screen reaction shots of laughing audience members, right after the biggest punchlines.
+    (start, end, clip). Set visuals.cutaways=false in config.json to turn them off."""
+    vis = cfg.get("visuals", {})
+    if not vis.get("cutaways", True):
+        return []
+    files = sorted(p for p in (ROOT / "assets/cutaways").glob("react_*") if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"))
+    if not files:
+        return []
+    from PIL import Image
+    length = float(vis.get("cutaway_seconds", 1.6))
+    cands = [(sg["end"] + 0.55, sg["pause"]) for sg in timings["segments"] if sg["laugh"] and sg["pause"] >= 1.9]
+    wins, last = [], -99.0
+    for a, pause in cands:
+        if a - last < 9.0:                       # keep them rare: the comedian is the show
+            continue
+        wins.append((a, a + min(length, max(pause - 0.5, 0.8))))
+        last = a
+    wins = wins[: int(vis.get("cutaway_max", 6))]
+    rnd = random.Random(seed)
+    rnd.shuffle(files)
+    out = []
+    for k, (a, b) in enumerate(wins):
+        src = files[k % len(files)]
+        im = Image.open(src).convert("RGB")
+        fx, fy = detect_face_pil(im, (0.5, 0.4))
+        p = BUILD / f"cut_{k}.png"
+        cover_crop(im, W, H, fx, fy).save(p)
+        clip = BUILD / f"cut_{k}.mp4"
+        try:
+            _motion_clip(p, (b - a) + 0.3, clip, rnd.randint(0, 3))
+            out.append((a, b, clip))
+        except Exception as e:  # noqa: BLE001
+            log(f"[edit] cutaway motion failed ({str(e)[:120]}); skipping it")
+    return out
+
+
+def add_text_overlays(chain, cur, cfg, script, total):
+    """Hook title (first seconds), red LIVE tag, channel name, and the follow call-to-action at the end."""
+    if not Path(FONT_BOLD).exists():
+        return cur
+    hook = (script.get("thumb_text") or script.get("title") or "WAIT FOR IT").upper()
+    lines, cur_line = [], ""
+    for w_ in hook.split():
+        if cur_line and len(cur_line) + 1 + len(w_) > 12:
+            lines.append(cur_line)
+            cur_line = w_
+        else:
+            cur_line = (cur_line + " " + w_).strip()
+    lines.append(cur_line)
+    (BUILD / "intro.txt").write_text("\n".join(lines[:2]), encoding="utf-8")
+    (BUILD / "channel.txt").write_text(cfg["channel_name"], encoding="utf-8")
+    (BUILD / "outro.txt").write_text(cfg.get("shorts", {}).get("cta_text", "Follow for daily comedy"), encoding="utf-8")
+    (BUILD / "live.txt").write_text("\u25cf LIVE", encoding="utf-8")
+    box = ":box=1:boxcolor=black@0.38:boxborderw=14"
+    chain.append(
+        f"[{cur}]drawtext=fontfile={FONT_BOLD}:textfile=live.txt:fontsize=44:fontcolor=0xFF3B30:borderw=4:"
+        f"bordercolor=black@0.8:x=36:y=70:enable='lt(mod(t,1.6),1.1)'[tl]")
+    chain.append(
+        f"[tl]drawtext=fontfile={FONT_BOLD}:textfile=intro.txt:fontsize=80:fontcolor=white:borderw=6:"
+        f"bordercolor=black@0.85:line_spacing=8:x=(w-text_w)/2:y=130{box}:"
+        f"alpha='if(lt(t,0.25),t/0.25,if(lt(t,3.2),1,max(0,(3.6-t)/0.4)))'[t1]")
+    chain.append(
+        f"[t1]drawtext=fontfile={FONT_BOLD}:textfile=channel.txt:fontsize=56:fontcolor=white:borderw=5:"
+        f"bordercolor=black@0.85:x=(w-text_w)/2:y=130{box}:enable='between(t,3.6,{max(total - 4.0, 4):.2f})'[t2]")
+    chain.append(
+        f"[t2]drawtext=fontfile={FONT_BOLD}:textfile=outro.txt:fontsize=58:fontcolor=0xFFC21A:borderw=5:"
+        f"bordercolor=black@0.85:x=(w-text_w)/2:y=130{box}:enable='between(t,{max(total - 3.9, 4):.2f},{total - 0.1:.2f})'[t3]")
+    return "t3"
+
+
+def render_scene(cfg, args, script, timings, total, seed, rdir):
+    write_ass(timings, BUILD / "captions.ass")
+    build_audio(timings, rdir / "voice.wav", BUILD / "mix.wav", [])
+
+    if args.mode == "lipsync":
+        talking = rdir / "talking.mp4"
+        if not talking.exists():
+            fail("talking.mp4 missing (lip-sync render did not produce it)")
+    else:      # no lip-sync: the full-body picture with a very slow push-in
+        pool = body_pool()
+        if not pool:
+            fail("assets/bodies/ has no pictures (run the workflow once with 'new_face' ticked)")
+        from PIL import Image
+        first_only = cfg.get("visuals", {}).get("base_mode", "single") == "single"
+        pic = pool[0] if first_only else pool[seed % len(pool)]
+        cover_crop(Image.open(pic).convert("RGB"), W, H, 0.5, 0.5).save(BUILD / "fallback_base.png")
+        talking = BUILD / "fallback_main.mp4"
+        sh(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", str(FPS), "-i", str(BUILD / "fallback_base.png"),
+            "-vf", f"scale={int(W * 1.1)}:{int(H * 1.1)},zoompan=z='min(1.0+0.00006*on,1.08)':x='iw/2-(iw/zoom/2)':"
+                   f"y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={FPS},format=yuv420p",
+            "-t", f"{total + 8:.1f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(talking)])
+
+    shots = plan_shots(timings, seed, min_len=4.6) if cfg.get("visuals", {}).get("camera_cuts", True) else [(0.0, "wide")]
+    log(f"[edit] camera plan: {[(round(t, 1), n) for t, n in shots]}")
+    chain = scene_chain(shots)
+    inputs = ["-i", str(talking)]
+    cur = "v0"
+    wins = scene_cutaways(timings, seed, cfg)
+    for k, (a, b, clip) in enumerate(wins):
+        inputs += ["-i", str(clip)]
+        chain.append(f"[{k + 1}:v]setpts=PTS-STARTPTS+{a:.3f}/TB[cv{k}]")
+        chain.append(f"[{cur}][cv{k}]overlay=0:0:eof_action=pass:enable='between(t,{a:.2f},{b:.2f})'[ov{k}]")
+        cur = f"ov{k}"
+    log(f"[edit] audience reaction cutaways: {len(wins)}")
+    audio_idx = 1 + len(wins)
+    inputs += ["-i", str(BUILD / "mix.wav")]
+    chain.append(f"[{cur}]vignette=PI/5,eq=brightness='0.010*sin(2*PI*t/2.7)':eval=frame[vg]")
+    cur = add_text_overlays(chain, "vg", cfg, script, total)
+    chain.append(f"[{cur}]subtitles=captions.ass:fontsdir=/usr/share/fonts[vout]")
+
+    final = BUILD / "final.mp4"
+    sh(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chain), "-map", "[vout]", "-map", f"{audio_idx}:a",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-r", str(FPS),
+        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-t", f"{total:.2f}", str(final)], cwd=str(BUILD))
+    log(f"[edit] done: {final} ({final.stat().st_size / 1e6:.1f} MB, {total:.0f}s, mode={args.mode}, layout=scene)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["lipsync", "fallback"], default="lipsync")
@@ -610,6 +814,11 @@ def main():
         fail("voice.wav missing")
 
     seed = date.today().toordinal()
+    global CAPTION_MARGIN
+    CAPTION_MARGIN = int(cfg.get("shorts", {}).get("caption_margin", 270))
+    if LAYOUT == "scene":
+        render_scene(cfg, args, script, timings, total, seed, rdir)
+        return
     if LAYOUT in ("stage", "full"):
         render_stage(cfg, args, script, timings, total, seed, rdir)
         return

@@ -115,6 +115,7 @@ def synthesize(script, outdir, cfg):
             "i": i, "text": seg["text"], "role": seg.get("role", "setup"),
             "start": round(start, 3), "end": round(end, 3),
             "pause": round(pause_ms / 1000, 3), "laugh": bool(seg.get("laugh", False)),
+            "chuckle": bool(seg.get("chuckle", False)),
         })
         print(f"[tts] {i + 1}/{len(script['segments'])} {end - start:.1f}s", flush=True)
 

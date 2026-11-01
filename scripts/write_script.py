@@ -165,8 +165,22 @@ def banned_hit(script):
     return [b for b in BANNED if b in blob]
 
 
+def _rng_ms(lo, hi, key):
+    """Stable pseudo-random value between lo and hi for this line (varied, but the same on a retry)."""
+    import zlib
+    return int(lo + (zlib.crc32(key.encode("utf-8")) % 1000) / 1000 * (hi - lo))
+
+
 def normalize(script, cfg):
-    min_laugh = cfg["timing"]["min_laugh_pause_ms"]
+    """Stand-up timing. Real comics (1) breathe after a set-up line, (2) hold a beat right before the punch,
+    (3) STOP and let the room laugh after the punch (2 to 3 s, longer for bigger laughs), (4) wait for the room
+    to answer when they ask the crowd a question."""
+    t = cfg["timing"]
+    laugh_lo = int(t.get("laugh_pause_min_ms", t.get("min_laugh_pause_ms", 900)))
+    laugh_hi = int(t.get("laugh_pause_max_ms", laugh_lo))
+    setup_lo, setup_hi = t.get("setup_pause_ms", [300, 550])
+    beat_lo, beat_hi = t.get("beat_ms", [450, 750])
+    chuckle_ms = int(t.get("chuckle_pause_ms", 0))
     segs = []
     for s in script.get("segments", []):
         text = re.sub(r"\s+", " ", str(s.get("text", ""))).strip()
@@ -175,14 +189,19 @@ def normalize(script, cfg):
         role = s.get("role", "setup")
         if role not in ("setup", "punch", "aside"):
             role = "setup"
-        pause = int(s.get("pause_after_ms") or 0)
+        chuckle = False
         if role == "punch":
-            pause, laugh = max(pause, min_laugh), True
+            pause, laugh = _rng_ms(laugh_lo, laugh_hi, text), True
         elif role == "setup":
-            pause, laugh = min(max(pause, 200), 450), False
+            pause, laugh = _rng_ms(setup_lo, setup_hi, text), False
         else:
-            pause, laugh = min(max(pause, 250), 450), False
-        segs.append({"text": text, "role": role, "pause_after_ms": pause, "laugh": laugh})
+            pause, laugh = _rng_ms(setup_lo, setup_hi, text), False
+            if chuckle_ms and text.rstrip().endswith(("?", "?\u0964")):   # a question to the room: wait for its answer
+                pause, chuckle = chuckle_ms, True
+        segs.append({"text": text, "role": role, "pause_after_ms": pause, "laugh": laugh, "chuckle": chuckle})
+    for i in range(len(segs) - 1):          # the beat before a punch line
+        if segs[i]["role"] != "punch" and segs[i + 1]["role"] == "punch" and not segs[i]["chuckle"]:
+            segs[i]["pause_after_ms"] = max(segs[i]["pause_after_ms"], _rng_ms(beat_lo, beat_hi, segs[i]["text"] + "beat"))
     script["segments"] = segs
     return script
 

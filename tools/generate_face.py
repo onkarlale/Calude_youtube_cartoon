@@ -15,6 +15,16 @@ PROMPT = (
 )
 
 
+BODY_PROMPT = (
+    "vertical full-length photograph, wide shot from the back of a comedy club, a 32 year old Indian man standing "
+    "alone in the centre of a small stage, the WHOLE body visible from head to shoes, legs and shoes clearly visible, "
+    "short black hair, light stubble, {outfit}, dark trousers, holding a microphone with a yellow foam cover near "
+    "his chest, relaxed neutral expression, mouth closed, looking at the camera, {backdrop}, warm spotlight on him, "
+    "at the bottom of the picture the dark silhouettes of the audience's heads and shoulders, a few candle-lit tables, "
+    "out of focus, he is small in frame and centred, empty space around him, 35mm cinematic photo"
+)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--count", type=int, default=20)

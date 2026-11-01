@@ -44,13 +44,34 @@ def canvas(cfg):
 
 
 def layout(cfg):
-    """'landscape' | 'stage' (comedian panel + live audience panel) | 'closeup' (vertical, face fills the screen)."""
+    """'scene' (full-body vertical picture, audience is part of the picture) | 'landscape' | 'stage' | 'closeup'."""
     return cfg.get("shorts", {}).get("layout", "stage") if is_shorts(cfg) else "landscape"
 
 
 def base_size(cfg):
     """Size of the lip-sync base video (upscaled/re-framed later in the edit)."""
-    return (720, 1280) if layout(cfg) == "closeup" else (1280, 720)
+    lay = layout(cfg)
+    if lay == "scene":          # full-body vertical picture: a little larger so the (small) face keeps detail
+        return (864, 1536)
+    return (720, 1280) if lay == "closeup" else (1280, 720)
+
+
+def cascade_path():
+    """Path of OpenCV's frontal-face cascade, or None. (cv2.data is missing in some builds.)"""
+    try:
+        import os
+        import cv2
+        name = "haarcascade_frontalface_default.xml"
+        try:
+            return cv2.data.haarcascades + name
+        except AttributeError:
+            for base in (os.path.join(os.path.dirname(cv2.__file__), "data"),
+                         "/usr/share/opencv4/haarcascades", "/usr/share/opencv/haarcascades"):
+                if os.path.exists(os.path.join(base, name)):
+                    return os.path.join(base, name)
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def detect_face_center(img, default=(0.5, 0.42)):
@@ -59,8 +80,12 @@ def detect_face_center(img, default=(0.5, 0.42)):
         import cv2
         import numpy as np
         gray = cv2.cvtColor(np.array(img.convert("RGB")), cv2.COLOR_RGB2GRAY)
-        det = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        faces = det.detectMultiScale(gray, 1.1, 5, minSize=(max(40, img.width // 20), max(40, img.width // 20)))
+        cp = cascade_path()
+        if not cp:
+            return default
+        det = cv2.CascadeClassifier(cp)
+        m = max(24, img.width // 40)
+        faces = det.detectMultiScale(gray, 1.1, 5, minSize=(m, m))
         if len(faces) >= 1:
             x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
             return (x + w / 2) / img.width, (y + h / 2) / img.height

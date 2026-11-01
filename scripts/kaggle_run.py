@@ -34,7 +34,10 @@ def _image_jpeg(path, size, cfg):
     from PIL import Image
     vis = cfg.get("visuals", {})
     im = Image.open(path).convert("RGB")
-    fx, fy = detect_face_center(im, (float(vis.get("face_x", 0.5)), float(vis.get("face_y", 0.42))))
+    if cfg.get("shorts", {}).get("layout") == "scene":     # full-body picture: keep all of it (legs included)
+        fx, fy = 0.5, 0.5
+    else:
+        fx, fy = detect_face_center(im, (float(vis.get("face_x", 0.5)), float(vis.get("face_y", 0.42))))
     out = cover_crop(im, size[0], size[1], fx, fy)
     buf = io.BytesIO()
     out.save(buf, "JPEG", quality=92)
@@ -81,7 +84,11 @@ def _has_face(jpeg_bytes):
         import cv2
         import numpy as np
         img = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_GRAYSCALE)
-        det = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        from common import cascade_path
+        cp = cascade_path()
+        if not cp:
+            return True
+        det = cv2.CascadeClassifier(cp)
         if det.empty():
             return True
         return len(det.detectMultiScale(img, 1.1, 5, minSize=(60, 60))) > 0
@@ -89,8 +96,15 @@ def _has_face(jpeg_bytes):
         return True
 
 
-def base_pool():
-    """Every picture in assets/ and assets/faces/ plus every clip in assets/base_videos/."""
+def base_pool(cfg=None):
+    """Every picture in assets/ and assets/faces/ plus every clip in assets/base_videos/.
+    Layout "scene": only the tall full-body pictures in assets/bodies/ (body_01.png first)."""
+    if cfg is not None and cfg.get("shorts", {}).get("layout") == "scene":
+        bodies = sorted(p for p in (ROOT / "assets/bodies").glob("*") if p.suffix.lower() in IMG_EXT)
+        if not bodies:
+            fail("Layout is 'scene' but assets/bodies/ has no pictures. The bootstrap step creates them automatically (check the 'Create face + audience images' step and your CLOUDFLARE_* secrets), "
+                 "or put your own 9:16 full-body pictures in assets/bodies/.")
+        return [("image", p) for p in bodies]
     imgs = sorted(p for p in (ROOT / "assets").glob("*") if p.suffix.lower() in IMG_EXT)
     imgs += sorted(p for p in (ROOT / "assets/faces").glob("*") if p.suffix.lower() in IMG_EXT)
     vids = sorted(p for p in (ROOT / "assets/base_videos").glob("*") if p.suffix.lower() in VID_EXT)
@@ -101,9 +115,12 @@ def pick_base(cfg):
     """Choose today's base picture/video from the pool (random by default)."""
     vis = cfg.get("visuals", {})
     main = ROOT / "assets/comedian.png"
-    pool = base_pool()
-    if vis.get("base_mode", "rotate") == "single" and main.exists():
-        pool = [("image", main)]
+    pool = base_pool(cfg)
+    if vis.get("base_mode", "rotate") == "single":
+        if cfg.get("shorts", {}).get("layout") == "scene":
+            pool = pool[:1]
+        elif main.exists():
+            pool = [("image", main)]
     if not pool:
         fail("No comedian picture found. Put at least one image in assets/ (for example assets/comedian.png).")
     n = episode_number()
@@ -123,7 +140,7 @@ def pick_base(cfg):
         except Exception as e:  # noqa: BLE001
             log(f"[kaggle] could not read {p.name} ({e}); trying another")
             continue
-        if not _has_face(data):
+        if cfg.get("shorts", {}).get("layout") != "scene" and not _has_face(data):
             log(f"[kaggle] no clear face found in {p.name}; trying another picture")
             continue
         log(f"[kaggle] today's base: IMAGE {p.relative_to(ROOT)} [{idx + 1}/{len(pool)}]")
