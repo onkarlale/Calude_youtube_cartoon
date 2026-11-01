@@ -84,3 +84,13 @@ Send me the log lines and I will patch `kernel/render.py`.
   in 13+ mode. `config.json` -> `"script"` has `providers` (default `["gemini","groq"]`), `thinking` and `crowd_test`.
 - Movement: the comedian panel has a handheld camera sway and cuts, the laughing audience faces bounce, the crowd sways,
   and a LIVE badge blinks. Real laughter/applause recordings in `assets/sfx/` (names starting `laugh` / `applause`) make it sound much more real.
+
+## Full-screen layout (default) and 18+ jokes
+- `"layout": "full"` (in `config.json` under `"shorts"`): the picture fills the whole 1080x1920 screen and the live audience sits at the
+  bottom, fading softly into the picture (no bars, no hard lines). Captions sit between them.
+  - `"framing": "wide"` (default): Raj in a soft-edged panel that melts into a blurred extension of the same stage (face smaller, shoulders and stage visible).
+  - `"framing": "tight"`: Raj's picture fills the whole screen (face large).
+  - `"layout": "stage"` = two separate panels with lines, `"closeup"` = vertical face close-up.
+- `"audience": "adult"` (default now) = 18+ humour. `"teen"` = family friendly 13+. The hard limits (hate, slurs, politics, religion/caste,
+  explicit sex, real people) apply in every mode. Adult content can be age-restricted by YouTube and may get less reach or fewer ads.
+- Rendering a full 2.5 minute Short takes a few minutes on the GitHub runner (more panels = more work).

@@ -63,13 +63,14 @@
     "contains_synthetic_media": true
   },
   "format": "shorts",
-  "audience": "teen",
+  "audience": "adult",
   "shorts": {
     "width": 1080,
     "height": 1920,
     "max_seconds": 175,
     "cta_text": "Follow for daily comedy",
-    "layout": "stage"
+    "layout": "full",
+    "framing": "wide"
   },
   "title_hashtags": [
     "#Shorts",

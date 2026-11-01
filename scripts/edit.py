@@ -56,7 +56,7 @@ def caption_events(text, start, end, maxc=34):
 
 def write_ass(timings, path):
     if SHORTS:      # big captions in the lower third, above the Shorts buttons and title
-        mv = (H - STRIP_Y + 30) if LAYOUT == "stage" else int(H * 0.27)
+        mv = (H - STRIP_Y + (60 if LAYOUT == "full" else 30)) if LAYOUT in ("stage", "full") else int(H * 0.27)
         style = f"Style: Default,Noto Sans Devanagari,76,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,6,1,2,70,70,{mv},1\n\n"
         maxc = 20
     else:
@@ -326,6 +326,7 @@ def make_thumbnail(final, script, out):
 
 # ---------------------------------------------------------------- main
 # ---------------------------------------------------------------- stage layout (comedian panel + live audience panel)
+SHOTS_F = {"wide": (1.00, 0.0), "medium": (1.07, 0.0), "medium_l": (1.10, -0.04), "medium_r": (1.10, 0.04), "close": (1.22, 0.0)}
 SHOTS_S = {"wide": (1.00, 0.0), "medium": (1.12, 0.0), "medium_l": (1.15, -0.04), "medium_r": (1.15, 0.04), "close": (1.35, 0.0)}
 
 
@@ -394,7 +395,7 @@ def build_audience_strip(timings, total, seed):
         key = str(src)
         if key not in prepared:
             im = Image.open(src).convert("RGB")
-            fx, fy = detect_face_pil(im, (0.5, 0.4)) if src.name.startswith("react_") else (0.5, 0.5)
+            fx, fy = detect_face_pil(im, (0.5, 0.4)) if src.name.startswith("react_") else (0.5, 0.66 if LAYOUT == "full" else 0.5)
             png = BUILD / f"strip_src_{len(prepared)}.png"
             cover_crop(im, W, STRIP_H, fx, fy).save(png)
             prepared[key] = png
@@ -410,15 +411,23 @@ def build_audience_strip(timings, total, seed):
     return BUILD / "strip.mp4"
 
 
-def stage_chain(shots, fx, fy, has_strip):
-    """Comedian panel (re-framed shots with a gentle camera drift) over a blurred stage background, audience panel below."""
+def stage_chain(shots, fx, fy, idx, wide=False):
+    """Comedian panel (re-framed shots with a gentle camera drift), audience panel below.
+    idx = input numbers: {"strip": n|None, "smask": n|None, "pmask": n|None}.
+    full + tight : the picture fills the screen (audience fades in at the bottom).
+    full + wide  : a soft-edged panel melts into a blurred copy of the same stage, so the screen is still full."""
     n = len(shots)
-    parts = [f"[0:v]fps={FPS},setsar=1,tpad=stop_mode=clone:stop_duration=8,format=yuv420p,split={n + 1}[bgsrc]"
-             + "".join(f"[b{i}]" for i in range(n))]
-    parts.append(f"[bgsrc]crop=w='trunc(ih*{W}/{H}/2)*2':h=ih:x='(iw-ow)/2':y=0,scale={W}:{H},boxblur=22:3,"
-                 f"eq=brightness=-0.12:saturation=1.15,format=yuv420p[bg]")
+    full = LAYOUT == "full"
+    need_bg = (not full) or wide
+    parts = [f"[0:v]fps={FPS},setsar=1,tpad=stop_mode=clone:stop_duration=8,format=yuv420p,split={n + (1 if need_bg else 0)}"
+             + ("[bgsrc]" if need_bg else "") + "".join(f"[b{i}]" for i in range(n))]
+    if need_bg:
+        bright = "-0.03:saturation=1.2" if full else "-0.12:saturation=1.15"
+        parts.append(f"[bgsrc]crop=w='trunc(ih*{W}/{H}/2)*2':h=ih:x='(iw-ow)/2':y=0,scale={W}:{H},boxblur=22:3,"
+                     f"eq=brightness={bright},format=yuv420p[bg]")
+    tbl = SHOTS_F if full else SHOTS_S
     for i, (t0, name) in enumerate(shots):
-        z, dx = SHOTS_S[name]
+        z, dx = tbl[name]
         end = f":end={shots[i + 1][0]:.3f}" if i + 1 < n else ""
         cx = min(max(fx + dx, 0.5 / z * 0.75), 1 - 0.5 / z * 0.75)
         cy = min(max(fy + 0.03, 0.5 / z), 1 - 0.5 / z)
@@ -432,23 +441,49 @@ def stage_chain(shots, fx, fy, has_strip):
     parts.append(f"[fgc]scale={int(W * 1.05) // 2 * 2}:{int(PANEL_H * 1.05) // 2 * 2},"
                  f"rotate=a='0.010*sin(2*PI*t/3.9)+0.004*sin(2*PI*t/1.7)':ow=iw:oh=ih:c=black,"
                  f"crop={W}:{PANEL_H}[fg]")
-    parts.append(f"[bg][fg]overlay=0:{PANEL_Y}[comp1]")
+    if need_bg:
+        src = "fg"
+        if idx.get("pmask"):
+            parts.append(f"[{idx['pmask']}:v]format=gray,setsar=1[pm]")
+            parts.append("[fg]format=yuv420p,setsar=1[fgv]")
+            parts.append("[fgv][pm]alphamerge[fga]")
+            src = "fga"
+        parts.append(f"[bg][{src}]overlay=0:{PANEL_Y}:format=auto[comp1]")
+    else:
+        parts.append(f"[fg]pad={W}:{H}:0:0:color=black[comp1]")
     cur = "comp1"
-    if has_strip:
-        parts.append(f"[{cur}][1:v]overlay=0:{STRIP_Y}:eof_action=repeat[comp2]")
+    if idx.get("strip") and idx.get("smask"):       # audience at the bottom, fading softly into the picture above
+        parts.append(f"[{idx['smask']}:v]format=gray,setsar=1[mask]")
+        parts.append(f"[{idx['strip']}:v]format=yuv420p,setsar=1[sv]")
+        parts.append("[sv][mask]alphamerge[stripa]")
+        parts.append(f"[{cur}][stripa]overlay=0:{STRIP_Y}:format=auto:eof_action=repeat[comp2]")
         cur = "comp2"
-    parts.append(f"[{cur}]drawbox=x=0:y={PANEL_Y - 4}:w={W}:h=8:color=0xFFC21A@1:t=fill,"
-                 f"drawbox=x=0:y={STRIP_Y - 4}:w={W}:h=8:color=0xFFC21A@1:t=fill,"
-                 f"vignette=PI/4.5,eq=brightness='0.012*sin(2*PI*t/2.7)':eval=frame[comp3]")
+    elif idx.get("strip"):
+        parts.append(f"[{cur}][{idx['strip']}:v]overlay=0:{STRIP_Y}:eof_action=repeat[comp2]")
+        cur = "comp2"
+    lines = (f"drawbox=x=0:y={PANEL_Y - 4}:w={W}:h=8:color=0xFFC21A@1:t=fill,"
+             f"drawbox=x=0:y={STRIP_Y - 4}:w={W}:h=8:color=0xFFC21A@1:t=fill,") if LAYOUT == "stage" else ""
+    parts.append(f"[{cur}]{lines}vignette=PI/4.5,eq=brightness='0.012*sin(2*PI*t/2.7)':eval=frame[comp3]")
     return parts, "comp3"
 
 
 def render_stage(cfg, args, script, timings, total, seed, rdir):
     global PANEL_Y, PANEL_H, STRIP_Y, STRIP_H
-    PANEL_H = 1000          # a wider-than-square comedian panel: face smaller, stage and shoulders visible
-    PANEL_Y = int(H * 0.13) // 2 * 2
-    STRIP_Y = PANEL_Y + PANEL_H
-    STRIP_H = H - STRIP_Y
+    wide = cfg.get("shorts", {}).get("framing", "wide") == "wide"
+    if LAYOUT == "full":     # the picture fills the screen; the audience overlays the bottom and fades into it
+        STRIP_H = 520
+        STRIP_Y = H - STRIP_H
+        if wide:             # Raj in a soft-edged panel that melts into a blurred extension of the same stage
+            PANEL_H = 1100
+            PANEL_Y = 250
+        else:                # Raj's picture fills the whole screen (face large)
+            PANEL_H = H - 360
+            PANEL_Y = 0
+    else:
+        PANEL_H = 1000      # a wider-than-square comedian panel: face smaller, stage and shoulders visible
+        PANEL_Y = int(H * 0.13) // 2 * 2
+        STRIP_Y = PANEL_Y + PANEL_H
+        STRIP_H = H - STRIP_Y
     write_ass(timings, BUILD / "captions.ass")
     build_audio(timings, rdir / "voice.wav", BUILD / "mix.wav", [])
 
@@ -474,12 +509,39 @@ def render_stage(cfg, args, script, timings, total, seed, rdir):
     shots = plan_shots(timings, seed) if cfg.get("visuals", {}).get("camera_cuts", True) else [(0.0, "wide")]
     log(f"[edit] camera plan: {[(round(t, 1), n) for t, n in shots]}")
     strip = build_audience_strip(timings, total, seed)
-    chain, cur = stage_chain(shots, fx, fy, strip is not None)
-
+    use_mask = LAYOUT == "full" and strip is not None
     inputs = ["-i", str(talking)]
+    idx, n_in = {"strip": None, "smask": None, "pmask": None}, 1
     if strip is not None:
         inputs += ["-i", str(strip)]
-    audio_idx = 2 if strip is not None else 1
+        idx["strip"] = n_in
+        n_in += 1
+    from PIL import Image
+
+    def vertical_ramp(height, top, bottom, path):
+        """Grey mask: 0 -> 255 over `top` rows at the top, 255 -> 0 over `bottom` rows at the bottom (smoothstep)."""
+        col = Image.new("L", (1, height))
+        vals = []
+        for y in range(height):
+            a_ = min(1.0, y / top) if top else 1.0
+            b_ = min(1.0, (height - 1 - y) / bottom) if bottom else 1.0
+            v = min(a_, b_)
+            vals.append(int(255 * v * v * (3 - 2 * v)))
+        col.putdata(vals)
+        col.resize((W, height)).save(path)
+
+    if use_mask:
+        vertical_ramp(STRIP_H, 190, 0, BUILD / "strip_mask.png")
+        inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{total + 3:.1f}", "-i", str(BUILD / "strip_mask.png")]
+        idx["smask"] = n_in
+        n_in += 1
+    if LAYOUT == "full" and wide:
+        vertical_ramp(PANEL_H, 130, 130, BUILD / "panel_mask.png")
+        inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{total + 3:.1f}", "-i", str(BUILD / "panel_mask.png")]
+        idx["pmask"] = n_in
+        n_in += 1
+    chain, cur = stage_chain(shots, fx, fy, idx, wide=(LAYOUT == "full" and wide))
+    audio_idx = n_in
     inputs += ["-i", str(BUILD / "mix.wav")]
 
     if Path(FONT_BOLD).exists():
@@ -496,20 +558,26 @@ def render_stage(cfg, args, script, timings, total, seed, rdir):
         (BUILD / "channel.txt").write_text(cfg["channel_name"], encoding="utf-8")
         (BUILD / "outro.txt").write_text(cfg.get("shorts", {}).get("cta_text", "Follow for daily comedy"), encoding="utf-8")
         (BUILD / "live.txt").write_text("\u25cf LIVE", encoding="utf-8")
+        full = LAYOUT == "full"
+        box = ":box=1:boxcolor=black@0.38:boxborderw=14" if full else ""
+        y_live = 150 if full else PANEL_Y + 24
+        x_live = "36" if full else "w-text_w-36"
+        y_hook, y_name = (200, 200) if full else (34, 80)
+        y_cta = 200 if full else 84
         chain.append(
             f"[{cur}]drawtext=fontfile={FONT_BOLD}:textfile=live.txt:fontsize=44:fontcolor=0xFF3B30:borderw=4:"
-            f"bordercolor=black@0.8:x=w-text_w-36:y={PANEL_Y + 24}:enable='lt(mod(t,1.6),1.1)'[tl]")
+            f"bordercolor=black@0.8:x={x_live}:y={y_live}:enable='lt(mod(t,1.6),1.1)'[tl]")
         cur = "tl"
         chain.append(
             f"[{cur}]drawtext=fontfile={FONT_BOLD}:textfile=intro.txt:fontsize=80:fontcolor=white:borderw=6:"
-            f"bordercolor=black@0.85:line_spacing=8:x=(w-text_w)/2:y=34:"
+            f"bordercolor=black@0.85:line_spacing=8:x=(w-text_w)/2:y={y_hook}{box}:"
             f"alpha='if(lt(t,0.25),t/0.25,if(lt(t,3.2),1,max(0,(3.6-t)/0.4)))'[t1]")
         chain.append(
             f"[t1]drawtext=fontfile={FONT_BOLD}:textfile=channel.txt:fontsize=62:fontcolor=white:borderw=5:"
-            f"bordercolor=black@0.85:x=(w-text_w)/2:y=80:enable='between(t,3.6,{max(total - 2.7, 4):.2f})'[t2]")
+            f"bordercolor=black@0.85:x=(w-text_w)/2:y={y_name}{box}:enable='between(t,3.6,{max(total - 2.7, 4):.2f})'[t2]")
         chain.append(
             f"[t2]drawtext=fontfile={FONT_BOLD}:textfile=outro.txt:fontsize=58:fontcolor=0xFFC21A:borderw=5:"
-            f"bordercolor=black@0.85:x=(w-text_w)/2:y=84:enable='between(t,{max(total - 2.6, 4):.2f},{total - 0.1:.2f})'[t3]")
+            f"bordercolor=black@0.85:x=(w-text_w)/2:y={y_cta}{box}:enable='between(t,{max(total - 2.6, 4):.2f},{total - 0.1:.2f})'[t3]")
         cur = "t3"
     chain.append(f"[{cur}]subtitles=captions.ass:fontsdir=/usr/share/fonts[vout]")
 
@@ -518,7 +586,7 @@ def render_stage(cfg, args, script, timings, total, seed, rdir):
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-r", str(FPS),
         "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-t", f"{total:.2f}", str(final)], cwd=str(BUILD))
     mb = final.stat().st_size / 1e6
-    log(f"[edit] done: {final} ({mb:.1f} MB, {total:.0f}s, mode={args.mode}, layout=stage)")
+    log(f"[edit] done: {final} ({mb:.1f} MB, {total:.0f}s, mode={args.mode}, layout={LAYOUT})")
 
 
 def main():
@@ -542,7 +610,7 @@ def main():
         fail("voice.wav missing")
 
     seed = date.today().toordinal()
-    if LAYOUT == "stage":
+    if LAYOUT in ("stage", "full"):
         render_stage(cfg, args, script, timings, total, seed, rdir)
         return
     write_ass(timings, BUILD / "captions.ass")
