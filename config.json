@@ -4,16 +4,17 @@
   "privacy": "public",
   "fallback_upload": false,
   "visuals": {
-    "base_mode": "single",
-    "base_pick": "random",
+    "base_mode": "rotate",
+    "base_pick": "sequential",
     "face_pool": 6,
     "camera_cuts": true,
     "face_x": 0.5,
     "face_y": 0.2,
-    "body_pool": 4,
+    "body_pool": 3,
     "cutaways": true,
     "cutaway_max": 6,
-    "cutaway_seconds": 1.6
+    "cutaway_seconds": 1.6,
+    "comedian_mode": "rotate"
   },
   "voice": {
     "engine": "edge",

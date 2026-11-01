@@ -35,10 +35,11 @@ def _image_jpeg(path, size, cfg):
     vis = cfg.get("visuals", {})
     im = Image.open(path).convert("RGB")
     if cfg.get("shorts", {}).get("layout") == "scene":     # full-body picture: keep all of it (legs included)
-        fx, fy = 0.5, 0.5
+        from common import fit_916
+        out = fit_916(im, size[0], size[1])
     else:
         fx, fy = detect_face_center(im, (float(vis.get("face_x", 0.5)), float(vis.get("face_y", 0.42))))
-    out = cover_crop(im, size[0], size[1], fx, fy)
+        out = cover_crop(im, size[0], size[1], fx, fy)
     buf = io.BytesIO()
     out.save(buf, "JPEG", quality=92)
     return buf.getvalue()
@@ -116,7 +117,10 @@ def pick_base(cfg):
     vis = cfg.get("visuals", {})
     main = ROOT / "assets/comedian.png"
     pool = base_pool(cfg)
-    if vis.get("base_mode", "rotate") == "single":
+    today = ROOT / "build/today_body.png"
+    if cfg.get("shorts", {}).get("layout") == "scene" and vis.get("comedian_mode", "new_daily") == "new_daily" and today.exists():
+        pool = [("image", today)]          # a brand-new comedian for this video
+    elif vis.get("base_mode", "rotate") == "single":
         if cfg.get("shorts", {}).get("layout") == "scene":
             pool = pool[:1]
         elif main.exists():

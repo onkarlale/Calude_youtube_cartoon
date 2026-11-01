@@ -105,3 +105,21 @@ def cover_crop(img, w, h, fx=0.5, fy=0.42):
     x0 = int(min(max(fx * img.width - cw / 2, 0), img.width - cw))
     y0 = int(min(max(fy * img.height - ch / 2, 0), img.height - ch))
     return img.crop((x0, y0, x0 + cw, y0 + ch)).resize((w, h), Image.LANCZOS)
+
+
+def fit_916(im, w, h):
+    """Make any picture a full 9:16 frame WITHOUT cutting the person off.
+    Tall pictures are simply cropped to 9:16. Wide/square ones are shown whole on a blurred, darkened copy of
+    themselves, so the legs and the sides are never lost."""
+    from PIL import Image, ImageEnhance, ImageFilter
+    im = im.convert("RGB")
+    if im.height / im.width >= 1.6:
+        return cover_crop(im, w, h, 0.5, 0.5)
+    bg = cover_crop(im, w, h, 0.5, 0.5).filter(ImageFilter.GaussianBlur(28))
+    bg = ImageEnhance.Brightness(bg).enhance(0.45)
+    sc = w / im.width
+    fg = im.resize((w, max(2, int(im.height * sc))), Image.LANCZOS)
+    if fg.height > h:
+        fg = fg.resize((int(fg.width * h / fg.height), h), Image.LANCZOS)
+    bg.paste(fg, ((w - fg.width) // 2, (h - fg.height) // 2))
+    return bg

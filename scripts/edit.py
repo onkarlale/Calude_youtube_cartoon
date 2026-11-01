@@ -15,7 +15,7 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from common import BUILD, ROOT, canvas, cover_crop, fail, is_shorts, load_config, log, sh  # noqa: E402
+from common import BUILD, ROOT, canvas, cover_crop, fail, fit_916, is_shorts, load_config, log, sh  # noqa: E402
 from common import layout as get_layout  # noqa: E402
 from common import detect_face_center as detect_face_pil  # noqa: E402
 
@@ -756,12 +756,15 @@ def render_scene(cfg, args, script, timings, total, seed, rdir):
             fail("talking.mp4 missing (lip-sync render did not produce it)")
     else:      # no lip-sync: the full-body picture with a very slow push-in
         pool = body_pool()
+        today = BUILD / "today_body.png"
+        if today.exists() and cfg.get("visuals", {}).get("comedian_mode", "new_daily") == "new_daily":
+            pool = [today]
         if not pool:
             fail("assets/bodies/ has no pictures (run the workflow once with 'new_face' ticked)")
         from PIL import Image
         first_only = cfg.get("visuals", {}).get("base_mode", "single") == "single"
         pic = pool[0] if first_only else pool[seed % len(pool)]
-        cover_crop(Image.open(pic).convert("RGB"), W, H, 0.5, 0.5).save(BUILD / "fallback_base.png")
+        fit_916(Image.open(pic), W, H).save(BUILD / "fallback_base.png")
         talking = BUILD / "fallback_main.mp4"
         sh(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", str(FPS), "-i", str(BUILD / "fallback_base.png"),
             "-vf", f"scale={int(W * 1.1)}:{int(H * 1.1)},zoompan=z='min(1.0+0.00006*on,1.08)':x='iw/2-(iw/zoom/2)':"
