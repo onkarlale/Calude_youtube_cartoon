@@ -139,6 +139,24 @@ def groq_chat(model, system, user, temperature):
     return None
 
 
+def _as_script_dict(out):
+    """Writers sometimes answer with a bare JSON list of segments (or wrap it in another key). Always return a dict."""
+    if isinstance(out, list):
+        return {"segments": out}
+    if isinstance(out, dict):
+        if not isinstance(out.get("segments"), list):
+            for v in out.values():          # e.g. {"set": [...]} or {"script": {"segments": [...]}}
+                if isinstance(v, list) and v and isinstance(v[0], dict) and "text" in v[0]:
+                    out = {**out, "segments": v}
+                    break
+                if isinstance(v, dict) and isinstance(v.get("segments"), list):
+                    out = {**out, **v}
+                    break
+        out["segments"] = [x for x in (out.get("segments") or []) if isinstance(x, dict)]
+        return out
+    return {"segments": []}
+
+
 def chat(model, system, user, temperature):
     """Ask the configured AI writers in order (Gemini first, Groq as backup). Returns a dict."""
     scfg = load_config().get("script", {})
@@ -147,12 +165,12 @@ def chat(model, system, user, temperature):
         if prov == "gemini" and gemini_available():
             out = gemini_chat(system, user, temperature, thinking=level)
             if out is not None:
-                return out
+                return _as_script_dict(out)
             log("[writer] Gemini did not work on any model in GEMINI_MODELS")
         elif prov == "groq" and groq_key():
             out = groq_chat(model, system, user, temperature)
             if out is not None:
-                return out
+                return _as_script_dict(out)
     fail("No AI writer produced a script. Add the GEMINI_API_KEY secret (Google AI Studio key); GEMINI_MODELS is optional.")
 
 
@@ -436,7 +454,14 @@ def crowd_test(cfg, system, final, model, before_problems):
     except SystemExit:
         log("[writer] tough-audience pass unavailable; keeping the punched-up script")
         return final
-    cand = normalize({"segments": (out or {}).get("segments", [])}, cfg)
+    except Exception as e:  # noqa: BLE001
+        log(f"[writer] tough-audience pass failed ({type(e).__name__}: {str(e)[:120]}); keeping the punched-up script")
+        return final
+    try:
+        cand = normalize({"segments": _as_script_dict(out)["segments"]}, cfg)
+    except Exception as e:  # noqa: BLE001
+        log(f"[writer] tough-audience answer unreadable ({type(e).__name__}); keeping the punched-up script")
+        return final
     segs = cand["segments"]
     lo, hi = cfg["script"]["min_words"], cfg["script"]["max_words"]
     candidate = dict(final)
