@@ -180,7 +180,8 @@ def make_bodies(target):
     Saved as assets/bodies/body_01.png ... ; body_01.png is the one used when visuals.base_mode is "single"."""
     cv2, det = detector()
     BODIES.mkdir(parents=True, exist_ok=True)
-    have = len(list(BODIES.glob("body_*.png")))
+    # your own comedian_XX.png pictures count too, so nothing is generated when you already have enough
+    have = len(list(BODIES.glob("body_*.png"))) + len(list(BODIES.glob("comedian_*.png")))
     attempts = 0
     while have < target and attempts < target * 4:
         outfit, backdrop = LOOKS[(have + attempts) % len(LOOKS)]

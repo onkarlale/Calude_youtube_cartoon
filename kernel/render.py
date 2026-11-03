@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-RENDER_VERSION = 8
+RENDER_VERSION = 9
 BASE_B64 = "__BASE_B64__"   # the day's base picture/video, filled in by scripts/kaggle_run.py
 T0 = time.time()
 
@@ -76,11 +76,12 @@ if PAYLOAD.get("base_kind") == "video":
          f"scale={VW}:{VH}:force_original_aspect_ratio=increase,crop={VW}:{VH},fps=25,format=yuv420p",
          "-t", "14", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", IDLE])
 else:
+    # A perfectly STILL picture: no zoom, no camera drift, no sway. MuseTalk then redraws only the mouth area, so
+    # the comedian, the stage and the audience stay exactly as they are in the picture and only the lips move.
     (JOB / "comedian.png").write_bytes(base64.b64decode(BASE_B64))
     run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "25", "-i", str(JOB / "comedian.png"),
-         "-vf", f"scale=trunc({VW}*1.1/2)*2:trunc({VH}*1.1/2)*2:flags=lanczos,"
-                f"crop={VW}:{VH}:x='(iw-ow)/2+{VW * 0.011:.1f}*sin(2*PI*t/7)':y='(ih-oh)/2+{VH * 0.011:.1f}*sin(2*PI*t/3.5)',format=yuv420p",
-         "-t", "14", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", IDLE])
+         "-vf", f"scale={VW}:{VH}:flags=lanczos,setsar=1,format=yuv420p",
+         "-t", "14", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", IDLE])
 log(f"idle video built: {IDLE}")
 
 ROOTDIR = Path("/tmp/mt")

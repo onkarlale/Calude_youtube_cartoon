@@ -29,6 +29,21 @@ Actions -> **daily-comedy-video** -> Run workflow.
 Keep `"privacy": "private"` in `config.json` for the first week, then change to `"public"`. YouTube may force
 uploads from unaudited API projects to stay private; then publish from Studio.
 
+## What changed in this update
+1. **Better jokes.** The writer now works like a writers' room: it pitches 14 candidate bits (each with the "obvious" joke it must avoid),
+   a tough-audience pass scores them, and only the best bits (max 2 per joke mechanism) become the set. Then the usual punch-up
+   and TWO tough-audience rewrites. A different comic voice each night (`deadpan`, `escalating panic`, ...), stock clichés
+   (Sharma ji, shaadi kab, EMI, good-morning groups ...) are limited, formula openers ("... ne meri zindagi barbaad kar di") are rejected,
+   news headlines are used far less often (`topic.news_ratio`, default 0.2) and `data/evergreen_topics.txt` has 45 fresher topics.
+   Switches in `config.json` -> `script`: `joke_bank`, `bank_size`, `bank_pick`, `crowd_rounds`.
+2. **Only the mouth moves.** `visuals.only_mouth_moves: true` (default): the picture is a perfectly still frame (no sway, zoom, camera cuts,
+   audience cut-aways, flicker or blinking LIVE badge); the Kaggle step lip-syncs only the mouth, and the final encode uses a still-picture
+   setting so the frame does not "breathe". Set it to `false` to get the old busy look back.
+3. **A different comedian every episode.** Every `assets/bodies/comedian_*.png` is used once, in random order, then a new random order
+   (never the same one twice in a row; any number of pictures works: 12, 20, 50). Add more `comedian_XX.png` files and they join the rotation
+   automatically. If the folder has no `comedian_*` files, every picture in it is used. A woman on stage gets a woman's voice via
+   `voice.by_image` in `config.json` (e.g. `"comedian_01.png": "hi-IN-SwaraNeural"`; add one line per picture that needs a different voice).
+
 ## Files
 ```
 .github/workflows/daily.yml   the only workflow

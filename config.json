@@ -5,16 +5,17 @@
   "fallback_upload": false,
   "visuals": {
     "base_mode": "rotate",
-    "base_pick": "sequential",
+    "base_pick": "shuffle",
     "face_pool": 6,
-    "camera_cuts": true,
+    "camera_cuts": false,
     "face_x": 0.5,
     "face_y": 0.2,
     "body_pool": 3,
-    "cutaways": true,
+    "cutaways": false,
     "cutaway_max": 6,
     "cutaway_seconds": 1.6,
-    "comedian_mode": "rotate"
+    "comedian_mode": "rotate",
+    "only_mouth_moves": true
   },
   "voice": {
     "engine": "edge",
@@ -24,7 +25,10 @@
       "punch": "-6%",
       "aside": "+4%"
     },
-    "pitch": "+0Hz"
+    "pitch": "+0Hz",
+    "by_image": {
+      "comedian_01.png": "hi-IN-SwaraNeural"
+    }
   },
   "timing": {
     "lead_ms": 600,
@@ -51,7 +55,11 @@
       "groq"
     ],
     "thinking": "medium",
-    "crowd_test": true
+    "crowd_test": true,
+    "joke_bank": true,
+    "bank_size": 14,
+    "bank_pick": 7,
+    "crowd_rounds": 2
   },
   "kaggle": {
     "kernel_slug": "comedy-render",
@@ -92,5 +100,8 @@
   "title_hashtags": [
     "#Shorts",
     "#HindiComedy"
-  ]
+  ],
+  "topic": {
+    "news_ratio": 0.2
+  }
 }

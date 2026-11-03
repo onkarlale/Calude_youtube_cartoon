@@ -31,6 +31,12 @@ FORMATS = [
     "expectation vs reality in 4 rounds, said straight to the crowd",
     "if this thing were brutally honest, act out its voice and argue with it",
     "things I am too old for now, listed live while the room agrees",
+    "fake documentary: narrate an ordinary moment like a wildlife documentary or a cricket commentator",
+    "a TED talk by a man who is completely unqualified and extremely confident",
+    "customer-care call with the universe: Raj complains, the universe has terrible policies",
+    "secret rules nobody told us but everyone follows, revealed one by one to the room",
+    "the object's point of view: what the thing thinks of Raj, argued back and forth",
+    "conspiracy theory about an everyday object, delivered with total seriousness (never politics)",
 ]
 
 BLOCK = re.compile(
@@ -73,7 +79,11 @@ def main():
     rnd = random.Random(date.today().toordinal())
 
     topic, kind = None, "evergreen"
-    if rnd.random() < 0.5:
+    try:
+        news_ratio = float(json.loads((ROOT / "config.json").read_text(encoding="utf-8")).get("topic", {}).get("news_ratio", 0.2))
+    except Exception:  # noqa: BLE001
+        news_ratio = 0.2
+    if rnd.random() < news_ratio:       # random headlines make weak jokes: use them only now and then
         cands = [c for c in news_candidates() if not too_similar(c, used)]
         if cands:
             topic, kind = rnd.choice(cands), "news"

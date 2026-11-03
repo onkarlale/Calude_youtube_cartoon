@@ -273,6 +273,78 @@ CRAFT = (
 )
 
 
+JOKE_ENGINE = """HOW A REAL JOKE WORKS (this is what separates a working comic from a 'normal' one). Read it twice.
+A JOKE = ONE specific, true observation + ONE reframe the audience did not see coming. A complaint is NOT a joke.
+'Traffic is bad', 'meetings are long', 'salary ends fast' are complaints: everyone already agrees, nobody laughs.
+Test every punch line: could a stranger GUESS its last word? Then it is dead: rewrite it until nobody can.
+MECHANISMS (use at least five different ones in a set): REFRAME (say what the thing REALLY is), LITERALIZE (take a phrase
+at face value), ABSURD LOGIC (apply a silly rule with total seriousness), STATUS FLIP (the confident one is the fool),
+SPECIFIC LIST (three items, the third is the odd one), SMALL-THING-AS-BETRAYAL, THE OBJECT TALKS BACK, ACT-OUT ARGUMENT.
+BAD -> GOOD (examples of the DIFFERENCE only; never reuse them):
+  BAD  'Office ki meetings bahut lambi hoti hain.'                      (a complaint)
+  GOOD 'Meeting ka naam tha quick sync. Chalis minute baad maine poocha, sync ho gaya? Bole, abhi toh hum agenda ka agenda bana rahe hain.'
+  BAD  'Meri salary bahut jaldi khatam ho jaati hai.'                   (exaggeration, no turn)
+  GOOD 'Mera account bank nahi, dharamshala hai. Paisa aata hai, chai peeta hai, chala jaata hai.'   (a REFRAME)
+  BAD  'Delivery wala bahut late aaya.'                                 (general)
+  GOOD 'Map pe uska icon meri gali ke bahar gol gol ghoom raha tha. Bhai, tu khana la raha hai ya satellite chhod raha hai?'   (SPECIFIC + absurd)
+FORBIDDEN FORMULAS (these are exactly why recent sets felt ordinary): opening or closing with '... ne meri zindagi barbaad
+kar di', '... sabse badi bhool hai', 'Log sochte hain ki...' (a general claim about a group), 'Bhai, yeh toh ...' as the
+whole joke; 'Papa/Mummy does something clueless' as the ONLY engine of a bit; pivoting a news headline into 'and my dad...'.
+Stock desi-comedy topics (Sharma ji ka beta, 'shaadi kab', WhatsApp good-morning, EMI, traffic horns, 'you are on mute') are
+allowed ONLY with a genuinely new angle, and at most ONE per set.
+SPECIFICITY RULE: every bit needs one exact, slightly odd detail (a number, a brand type, an object, a time, a named person
+you invent for tonight) that makes people say 'haan, bilkul aisa hi hota hai'.
+"""
+
+NIGHT_STYLES = [
+    ("deadpan", "flat, calm, almost bored. Says absurd things as if they were obvious. The less he reacts, the funnier."),
+    ("escalating panic", "starts normal and gets louder and more desperate with every line; interrupts himself."),
+    ("smug expert", "explains something completely wrong with total confidence, like a man who watched one YouTube video."),
+    ("wounded dignity", "treats a tiny everyday inconvenience like a personal betrayal; deadly serious about silly things."),
+    ("conspiracy brain", "connects ordinary objects and habits with total seriousness (appliances, apps, relatives; never politics)."),
+    ("live commentator", "narrates his own life like a cricket commentator or a wildlife documentary."),
+    ("old man at thirty-two", "grumpy about modern life, nostalgic, 'hamare zamane mein', suspicious of every new thing."),
+]
+
+
+def night_style(n):
+    """Raj performs in a different comic voice every episode (a different delivery makes the jokes feel different)."""
+    name, desc = NIGHT_STYLES[n % len(NIGHT_STYLES)]
+    return {"name": name, "desc": desc}
+
+
+STALE = {
+    "sharma": ["sharma ji", "शर्मा जी"],
+    "shaadi_kab": ["shaadi kab", "शादी कब"],
+    "good_morning": ["good morning", "गुड मॉर्निंग"],
+    "emi": ["emi", "ईएमआई"],
+    "horn": ["horn", "हॉर्न"],
+    "mute": ["on mute", "ऑन म्यूट"],
+}
+OPENER_FORMULAS = ["ज़िंदगी बर्बाद", "जिंदगी बर्बाद", "zindagi barbaad", "सबसे बड़ी भूल", "sabse badi bhool", "लोग सोचते हैं", "log sochte hain"]
+
+
+def _has_word(blob, w):
+    """Whole-word match for Latin words (so 'emi' does not match 'chemistry'); plain substring for Devanagari."""
+    w = w.lower()
+    if w.isascii():
+        return re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", blob) is not None
+    return w in blob
+
+
+def stale_hits(script):
+    blob = " ".join(sg["text"] for sg in script.get("segments", [])).lower()
+    return [k for k, words in STALE.items() if any(_has_word(blob, w) for w in words)]
+
+
+def formula_opener(script):
+    segs = script.get("segments", [])
+    if not segs:
+        return False
+    edge = (segs[0]["text"] + " " + segs[-1]["text"]).lower()
+    return any(f.lower() in edge for f in OPENER_FORMULAS)
+
+
 STORY_MARKERS = [
     "एक बार", "एक दिन", "कहानी", "ek baar", "ek din", "kahani", "once upon", "let me tell you a story",
     "तो हुआ यह कि", "to hua yeh ki", "सीख", "moral", "इस कहानी",
@@ -303,6 +375,15 @@ def style_problems(script):
     punch = sum(1 for s in segs if s["role"] == "punch") / len(segs)
     if punch < 0.25:
         problems.append("too few punch lines; at least a quarter of the lines must be punch lines")
+    stale = stale_hits(script)
+    if len(stale) >= 2:
+        problems.append(f"too many stock desi-comedy clichés ({', '.join(stale)}); keep at most ONE and give it a new angle, "
+                        "replace the others with fresh, odd, specific details")
+    if formula_opener(script):
+        problems.append("the first or last line uses a worn-out formula ('...ne meri zindagi barbaad kar di', 'sabse badi bhool', "
+                        "'log sochte hain'); open with a specific, surprising, concrete claim or confession")
+    if any(s["role"] == "punch" and s["text"].rstrip().endswith("?") for s in segs):
+        problems.append("a punch line ends in a question mark; a punch line must be a statement with the surprise as its last word")
     return problems
 
 
@@ -345,7 +426,7 @@ SHORTS_RULES = (
 )
 
 
-def build_prompts(cfg, topic, recent):
+def build_prompts(cfg, topic, recent, style=None):
     character = (ROOT / "assets/character.md").read_text(encoding="utf-8")
     lo, hi = cfg["script"]["min_words"], cfg["script"]["max_words"]
     shorts = cfg.get("format", "shorts") == "shorts"
@@ -359,8 +440,9 @@ def build_prompts(cfg, topic, recent):
         "sach bolun?, haath uthao. Raj can see the front row and reacts to them.\n"
         "2. PRESENT TENSE, IN THE MOMENT. Say \"Main office pahunchta hoon aur Gupta sir bolte hain...\" not \"ek din main office gaya "
         "aur...\". NEVER use story openers or morals: no \"ek baar\", \"ek din\", \"kahani\", \"once upon\", \"toh hua yeh ki\", no lesson at the end.\n"
-        "3. ACT IT OUT, DO NOT DESCRIBE IT. Put short dialogue in the mouths of Mummy, Papa, Gupta sir, Sharma ji ka beta "
-        "(\"Mummy bolti hain, 'beta, shaadi kab?'\") and let Raj react in the next line.\n"
+        "3. ACT IT OUT, DO NOT DESCRIBE IT. Put short dialogue in the mouths of other people (Mummy, Papa, a boss, a neighbour, "
+        "a shopkeeper, a cousin, a cab driver, an object that talks back) and let Raj react in the next line. Invent a NEW named "
+        "character for tonight. Do not lean on the same relatives every time.\n"
         "4. CROWD WORK, 2 or 3 times: ask the room a quick question, then answer for them or react to an imagined reply "
         "(\"Haath uthao jinke ghar mein... haan, front row wale uncle, aap bhi?\"). Never wait for a real answer.\n"
         "5. RHYTHM. Setup: one or two short sentences. Punch: 14 words or fewer, the surprising word LAST. Mix tiny lines "
@@ -374,7 +456,9 @@ def build_prompts(cfg, topic, recent):
         + ("End on the biggest laugh that calls back to the first line. No sign-off.\n" if shorts else
            "End on the biggest laugh, then one tiny sign-off aside (8 words max, for example \"Main Raj, aap sab ka shukriya, good night!\").\n") +
         "10. NEVER write stage directions, brackets, asterisks, emojis, hashtags or speaker labels. Only spoken words.\n"
-        + CRAFT + ADULT_RULES_USED + (SHORTS_RULES if shorts else "") +
+        + CRAFT + JOKE_ENGINE
+        + (f"TONIGHT'S COMIC VOICE: {style['name']}: {style['desc']} Keep this voice from the first line to the last.\n" if style else "")
+        + ADULT_RULES_USED + (SHORTS_RULES if shorts else "") +
         "Output JSON only.\n\n"
         f"{STYLE_REFERENCE}\n"
         f"CHARACTER BIBLE:\n{character}"
@@ -436,6 +520,8 @@ def crowd_test_prompt(cfg, segments_json):
         "(Hinglish) that Raj will perform. Step 1: for every line, decide honestly whether it gets a BIG laugh, a smile, "
         "nothing, or confusion. Step 2: rewrite EVERY line that will not get at least a smile, every line that sounds "
         "written instead of spoken, every setup that is too slow, and every punch line whose last word is not the surprise. "
+        "A line only counts as funny if it contains a REFRAME or a SURPRISE the audience could not predict; a complaint, an "
+        "exaggeration or a 'relatable' remark with no turn gets nothing. Rewrite those with a new mechanism and a more specific, odder detail. "
         "Keep the lines that already work word for word.\n"
         "RULES: keep the opening line's job (a scroll-stopping hook) and keep the final line calling back to the first. "
         "Keep the acted-out dialogue, the crowd-work questions and the same JSON shape. "
@@ -489,6 +575,128 @@ def crowd_test(cfg, system, final, model, before_problems):
     return candidate
 
 
+# ---------------------------------------------------------------- writers' room: find the jokes BEFORE writing the set
+def bank_prompt(cfg, topic, style, n):
+    news = topic.get("kind") == "news"
+    family = cfg.get("audience", "teen") != "adult"
+    return (
+        "WRITERS' ROOM. You are four sharp stand-up writers pitching jokes for Raj (Hinglish, Hindi in Devanagari, English words "
+        "in Latin script).\n"
+        f"TOPIC SEED: {topic['topic']}\n"
+        + ("This is a news headline: use it for ONE spark only, pivot to everyday life in the first sentence, never explain the news, "
+           "no politics, religion or tragedy.\n" if news else "")
+        + f"COMIC VOICE TONIGHT: {style['name']}: {style['desc']}\n"
+        + ("Keep everything family friendly (ages 13+): no swearing, no sexual or alcohol jokes, nothing cruel.\n" if family else
+           "Adult (18+) humour is allowed within the hard limits (no hate, no religion or caste, no politics, no explicit sex).\n")
+        + f"Pitch EXACTLY {n} different bits about this topic. Rules:\n"
+        "- For EACH bit first write 'obvious_version': the predictable joke EVERYONE makes on this idea. That one is REJECTED. "
+        "Then write the real bit, which must go somewhere the obvious version does not.\n"
+        "- Each bit uses a DIFFERENT mechanism (reframe, literalize, absurd logic, status flip, specific list, small-thing-as-betrayal, "
+        "object talks back, act-out argument).\n"
+        "- 'truth' = the exact, slightly odd real detail this joke is built on (a number, an object, a time, an invented name).\n"
+        "- 'setup' = 1 or 2 short spoken sentences, max 22 words. 'punch' = max 14 words, the surprise is the LAST word. "
+        "'tag' = an optional extra punch right after (max 10 words) or empty.\n"
+        "- Spoken, natural Hinglish. Present tense. No stage directions.\n"
+        + JOKE_ENGINE +
+        'Return ONLY JSON: {"bits":[{"mechanism":"...","obvious_version":"...","truth":"...","setup":"...","punch":"...","tag":"..."}]}'
+    )
+
+
+def judge_prompt(bank):
+    items = [{"i": i, "setup": b.get("setup", ""), "punch": b.get("punch", ""), "tag": b.get("tag", "")} for i, b in enumerate(bank)]
+    return (
+        "You are 200 strangers in a comedy club at 10 pm. You are TOUGH: you laugh out loud only when a joke is surprising, "
+        "specific and lands on its last word. You do NOT laugh at complaints, at things you could predict, or at jokes that "
+        "merely say 'this is relatable'. Score every bit from 1 to 10 (9-10 = loud laugh, 7-8 = solid laugh, 5-6 = a smile, "
+        "1-4 = nothing). Be harsh: most bits should get 4 to 6. For every bit scoring below 7, if you can think of a funnier, "
+        "less predictable last line (max 14 words, surprise last), put it in 'better_punch'; otherwise leave it empty.\n\n"
+        f"BITS:\n{json.dumps(items, ensure_ascii=False)}\n\n"
+        'Return ONLY JSON: {"scores":[{"i":0,"score":5,"better_punch":""}]}'
+    )
+
+
+def pick_bits(bank, judged, want=7):
+    """Best bits first, at most two per mechanism, nothing that breaks the content rules."""
+    rows = []
+    for i, b in enumerate(bank):
+        if not isinstance(b, dict):
+            continue
+        j = judged.get(i, {})
+        try:
+            score = float(j.get("score", 5))
+        except (TypeError, ValueError):
+            score = 5.0
+        setup, punch = str(b.get("setup", "")).strip(), str(b.get("punch", "")).strip()
+        better = str(j.get("better_punch", "") or "").strip()
+        if better and score < 7:
+            punch, score = better, score + 0.5      # a rewritten ending is only a small bonus: it has not been re-judged
+        if not setup or not punch:
+            continue
+        pseudo = {"segments": [{"text": f"{setup} {punch} {b.get('tag', '')}"}]}
+        if banned_hit(pseudo):
+            continue
+        rows.append({"mech": str(b.get("mechanism", "")).strip().lower() or "other", "setup": setup, "punch": punch,
+                     "tag": str(b.get("tag", "") or "").strip(), "score": score, "pseudo": pseudo})
+    rows.sort(key=lambda r: -r["score"])
+    chosen, per = [], {}
+    for r in rows:
+        if per.get(r["mech"], 0) >= 2:
+            continue
+        chosen.append(r)
+        per[r["mech"]] = per.get(r["mech"], 0) + 1
+        if len(chosen) >= want:
+            break
+    return chosen
+
+
+def material_block(bits):
+    lines = []
+    for k, b in enumerate(bits, 1):
+        tag = f" | TAG: {b['tag']}" if b["tag"] else ""
+        lines.append(f"BIT {k} [{b['mech']}, audience score {b['score']:.0f}/10]: SETUP: {b['setup']} | PUNCH: {b['punch']}{tag}")
+    return (
+        "\n\nMATERIAL FROM THE WRITERS' ROOM (already tested on a tough audience; this is your best stuff):\n" + "\n".join(lines) + "\n"
+        "Build the whole set from this material. Use at least 6 of the bits. Keep each punch line's reframe and its LAST WORD; "
+        "you may reword for natural speech, split a setup into two short lines, or sharpen it, but never make a punch line "
+        "more predictable. Order them so the set escalates and the biggest bit is last. Connect them with quick spoken "
+        "reactions, crowd-work questions and callbacks (not narration). Start with a scroll-stopping first line built from "
+        "one of the bits' specific details. You may add a few new lines of your own, as long as each one is also a real joke.\n"
+    )
+
+
+def joke_material(cfg, system, topic, style, model):
+    """Writers' room (pitch many bits) + tough-audience scoring. Returns a prompt block, or '' if anything fails."""
+    scfg = cfg.get("script", {})
+    if not scfg.get("joke_bank", True):
+        return ""
+    n, want = int(scfg.get("bank_size", 14)), int(scfg.get("bank_pick", 7))
+    try:
+        log(f"[writer] writers' room: pitching {n} bits")
+        out = chat(model, system, bank_prompt(cfg, topic, style, n), 1.0)
+        bank = [b for b in (out.get("bits") or []) if isinstance(b, dict)]
+        if len(bank) < 6:
+            log(f"[writer] writers' room gave only {len(bank)} usable bits; writing without it")
+            return ""
+        log("[writer] tough audience scores the bits")
+        judged = {}
+        try:
+            jo = chat(model, system, judge_prompt(bank), 0.4)
+            for r in jo.get("scores") or []:
+                if isinstance(r, dict) and isinstance(r.get("i"), int):
+                    judged[r["i"]] = r
+        except (SystemExit, Exception) as e:  # noqa: BLE001
+            log(f"[writer] scoring unavailable ({type(e).__name__}); using the writers' own order")
+        bits = pick_bits(bank, judged, want)
+        if len(bits) < 4:
+            log("[writer] too few good bits survived; writing without the writers' room")
+            return ""
+        log("[writer] chosen bits: " + " || ".join(f"{b['score']:.0f}:{b['punch'][:40]}" for b in bits))
+        return material_block(bits)
+    except (SystemExit, Exception) as e:  # noqa: BLE001
+        log(f"[writer] writers' room failed ({type(e).__name__}: {str(e)[:120]}); writing without it")
+        return ""
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sample", action="store_true")
@@ -505,9 +713,13 @@ def main():
     topic = json.loads((BUILD / "topic.json").read_text(encoding="utf-8"))
     used = json.loads((ROOT / "used_topics.json").read_text(encoding="utf-8"))
     recent = [f"{u.get('title', '')} | {u.get('opener', '')}" for u in used[-10:] if u.get("title")]
-    system, draft_prompt = build_prompts(cfg, topic, recent)
+    from common import episode_number
+    night = night_style(episode_number())
+    log(f"[writer] comic voice tonight: {night['name']}")
+    system, draft_prompt = build_prompts(cfg, topic, recent, night)
     model = cfg["script"]["model"]
     lo, hi = cfg["script"]["min_words"], cfg["script"]["max_words"]
+    draft_prompt += joke_material(cfg, system, topic, night, model)
 
     feedback = ""
     for attempt in range(1, 5):
@@ -547,13 +759,15 @@ def main():
         fail("Could not get an acceptable script after 4 attempts.")
 
     if cfg.get("script", {}).get("crowd_test", True):
-        final = crowd_test(cfg, system, final, model, style_problems(final))
+        for _round in range(max(1, int(cfg.get("script", {}).get("crowd_rounds", 1)))):
+            final = crowd_test(cfg, system, final, model, style_problems(final))
         words = count_words(final)
     final["title"] = (final.get("title") or topic["topic"])[:95]
     final["description"] = final.get("description") or ""
     final["tags"] = [str(t)[:30] for t in (final.get("tags") or [])][:12]
     final["thumb_text"] = (final.get("thumb_text") or "NEW SET")[:28]
-    final["_meta"] = {"topic": topic["topic"], "kind": topic["kind"], "format": topic["format"], "words": words}
+    final["_meta"] = {"topic": topic["topic"], "kind": topic["kind"], "format": topic["format"], "words": words,
+                      "voice": night["name"]}
     (BUILD / "script.json").write_text(json.dumps(final, ensure_ascii=False, indent=1), encoding="utf-8")
     log(f"[writer] title: {final['title']}")
 

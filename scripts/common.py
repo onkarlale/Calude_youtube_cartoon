@@ -123,3 +123,46 @@ def fit_916(im, w, h):
         fg = fg.resize((int(fg.width * h / fg.height), h), Image.LANCZOS)
     bg.paste(fg, ((w - fg.width) // 2, (h - fg.height) // 2))
     return bg
+
+
+# ---------------------------------------------------------------- comedian pictures (assets/bodies)
+IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def episode_number():
+    """How many episodes were already published (= number of entries in used_topics.json)."""
+    try:
+        return len(json.loads((ROOT / "used_topics.json").read_text(encoding="utf-8")))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def comedian_pool(prefix="comedian_"):
+    """All comedian pictures. If assets/bodies/ holds files starting with `prefix` (comedian_01.png ...), ONLY those are
+    used (the generic body_XX.png pictures are ignored). Any number of pictures works: 12, 20, 50 ..."""
+    allp = sorted(p for p in (ROOT / "assets/bodies").glob("*") if p.suffix.lower() in IMG_EXT)
+    chosen = [p for p in allp if p.name.lower().startswith(prefix.lower())]
+    return chosen or allp
+
+
+def _bag_order(cycle, size, seed):
+    """Order of the pictures in round number `cycle`. Every picture is used once per round, in a different random order
+    each round, and a new round never starts with the picture that ended the previous one."""
+    import random
+    order, prev_last = [], None
+    for c in range(cycle + 1):
+        order = list(range(size))
+        random.Random(seed * 1000 + c).shuffle(order)
+        if prev_last is not None and size > 1 and order[0] == prev_last:
+            order[0], order[1] = order[1], order[0]
+        prev_last = order[-1]
+    return order
+
+
+def shuffle_index(n, size, seed=20261029):
+    """Which picture for episode n. 'Shuffle bag': a different comedian every episode, no repeats until all `size`
+    pictures were used, then a fresh random order. Stateless (nothing to commit) and the SAME answer when the same
+    episode is retried."""
+    if size <= 1:
+        return 0
+    return _bag_order(n // size, size, seed)[n % size]

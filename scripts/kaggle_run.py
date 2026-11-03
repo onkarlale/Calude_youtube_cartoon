@@ -13,10 +13,11 @@ import time
 import uuid
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from common import BUILD, ROOT, base_size, cover_crop, detect_face_center, fail, is_shorts, load_config, log, sh  # noqa: E402
+from common import (BUILD, ROOT, base_size, comedian_pool, cover_crop, detect_face_center, episode_number, fail,  # noqa: E402
+                    is_shorts, load_config, log, sh, shuffle_index)
 
 
-EXPECTED_RENDER_VERSION = 8
+EXPECTED_RENDER_VERSION = 9
 
 
 def kaggle(*args):
@@ -58,13 +59,6 @@ def _prep_video(path, size):
     return None
 
 
-def episode_number():
-    try:
-        return len(json.loads((ROOT / "used_topics.json").read_text(encoding="utf-8")))
-    except Exception:  # noqa: BLE001
-        return 0
-
-
 def pick_index(n, size, how):
     """Which pool item for episode n. 'random' never repeats the previous episode's pick and gives the SAME
     answer on a retry of the same episode (stateless, seeded)."""
@@ -72,6 +66,8 @@ def pick_index(n, size, how):
         return 0
     if how == "sequential":
         return n % size
+    if how == "shuffle":      # every comedian once, in random order, then a new random order (never the same one twice in a row)
+        return shuffle_index(n, size)
     import random
     rnd, prev = random.Random(20261029), -1
     for _ in range(n + 1):
@@ -101,7 +97,7 @@ def base_pool(cfg=None):
     """Every picture in assets/ and assets/faces/ plus every clip in assets/base_videos/.
     Layout "scene": only the tall full-body pictures in assets/bodies/ (body_01.png first)."""
     if cfg is not None and cfg.get("shorts", {}).get("layout") == "scene":
-        bodies = sorted(p for p in (ROOT / "assets/bodies").glob("*") if p.suffix.lower() in IMG_EXT)
+        bodies = comedian_pool()          # comedian_*.png if present (any number of them), else every picture in the folder
         if not bodies:
             fail("Layout is 'scene' but assets/bodies/ has no pictures. The bootstrap step creates them automatically (check the 'Create face + audience images' step and your CLOUDFLARE_* secrets), "
                  "or put your own 9:16 full-body pictures in assets/bodies/.")
@@ -138,7 +134,7 @@ def pick_base(cfg):
                 log(f"[kaggle] video {p.name} could not be shrunk under 1.5 MB (use a shorter, steadier clip of about 8 s); trying another")
                 continue
             log(f"[kaggle] today's base: VIDEO {p.name} ({len(data) // 1024} KB) [{idx + 1}/{len(pool)}]")
-            return "video", data
+            return "video", data, p.name
         try:
             data = _image_jpeg(p, base_size(cfg), cfg)
         except Exception as e:  # noqa: BLE001
@@ -147,8 +143,8 @@ def pick_base(cfg):
         if cfg.get("shorts", {}).get("layout") != "scene" and not _has_face(data):
             log(f"[kaggle] no clear face found in {p.name}; trying another picture")
             continue
-        log(f"[kaggle] today's base: IMAGE {p.relative_to(ROOT)} [{idx + 1}/{len(pool)}]")
-        return "image", data
+        log(f"[kaggle] today's comedian: {p.relative_to(ROOT)} [{idx + 1}/{len(pool)}]")
+        return "image", data, p.name
     fail("No usable base picture or video (every file was unreadable or had no clear face).")
 
 
@@ -207,15 +203,21 @@ def main():
     kdir = BUILD / "kernel"
     shutil.rmtree(kdir, ignore_errors=True)
     kdir.mkdir(parents=True)
+    base_kind, base_bytes, base_name = pick_base(cfg)
+    voice_cfg = {k_: v_ for k_, v_ in cfg["voice"].items() if k_ != "by_image"}
+    override = (cfg["voice"].get("by_image") or {}).get(base_name)
+    if override:                      # e.g. a woman on stage must not talk with a man's voice
+        voice_cfg["name"] = override
+        log(f"[kaggle] voice for {base_name}: {override}")
     payload = {
         "script": script,
-        "config": {"voice": cfg["voice"], "timing": cfg["timing"], "video_size": list(base_size(cfg)),
+        "config": {"voice": voice_cfg, "timing": cfg["timing"], "video_size": list(base_size(cfg)),
                    "max_total": cfg.get("shorts", {}).get("max_seconds") if is_shorts(cfg) else None},
         "tts_lib": (ROOT / "scripts/tts_lib.py").read_text(encoding="utf-8"),
         "run_id": run_id,
     }
-    base_kind, base_bytes = pick_base(cfg)
     payload["base_kind"] = base_kind
+    (BUILD / "base_name.txt").write_text(base_name, encoding="utf-8")
     b64 = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode()
     template = (ROOT / "kernel/render.py").read_text(encoding="utf-8")
     if f"RENDER_VERSION = {EXPECTED_RENDER_VERSION}" not in template:

@@ -15,7 +15,8 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from common import BUILD, ROOT, canvas, cover_crop, fail, fit_916, is_shorts, load_config, log, sh  # noqa: E402
+from common import (BUILD, ROOT, canvas, comedian_pool, cover_crop, episode_number, fail, fit_916, is_shorts,  # noqa: E402
+                    load_config, log, sh, shuffle_index)
 from common import layout as get_layout  # noqa: E402
 from common import detect_face_center as detect_face_pil  # noqa: E402
 
@@ -653,12 +654,35 @@ SHOTS_SCENE = {"wide": (1.00, 0.0), "medium": (1.05, 0.0), "medium_l": (1.07, -0
 
 
 def body_pool():
-    exts = (".png", ".jpg", ".jpeg", ".webp")
-    return sorted(p for p in (ROOT / "assets/bodies").glob("*") if p.suffix.lower() in exts)
+    return comedian_pool()
 
 
-def scene_chain(shots):
-    """One full-screen picture. Re-framed per shot (gentle push-ins), slow handheld drift, no side panels."""
+def only_mouth_moves(cfg):
+    """True (default): the picture is a still frame, nothing moves except the lips (no camera sway, zoom, cuts,
+    cut-aways, flicker or blinking badge). Set visuals.only_mouth_moves=false in config.json for the old busy look."""
+    return bool(cfg.get("visuals", {}).get("only_mouth_moves", True))
+
+
+def todays_comedian(cfg, pool, seed):
+    """The same comedian the Kaggle step used (build/base_name.txt); otherwise today's shuffle-bag pick."""
+    try:
+        name = (BUILD / "base_name.txt").read_text(encoding="utf-8").strip()
+        for p_ in pool:
+            if p_.name == name:
+                return p_
+    except OSError:
+        pass
+    if cfg.get("visuals", {}).get("base_mode", "rotate") == "single":
+        return pool[0]
+    return pool[shuffle_index(episode_number(), len(pool))]
+
+
+def scene_chain(shots, static=False):
+    """One full-screen picture. Re-framed per shot (gentle push-ins), slow handheld drift, no side panels.
+    static=True: the frame is only scaled to the canvas, so nothing moves except what the lip-sync moves."""
+    if static:
+        return [f"[0:v]fps={FPS},setsar=1,tpad=stop_mode=clone:stop_duration=8,format=yuv420p,"
+                f"scale={W}:{H}:flags=lanczos,setsar=1,format=yuv420p[v0]"]
     n = len(shots)
     parts = [f"[0:v]fps={FPS},setsar=1,tpad=stop_mode=clone:stop_duration=8,format=yuv420p,split={n}"
              + "".join(f"[b{i}]" for i in range(n))]
@@ -712,8 +736,9 @@ def scene_cutaways(timings, seed, cfg):
     return out
 
 
-def add_text_overlays(chain, cur, cfg, script, total):
-    """Hook title (first seconds), red LIVE tag, channel name, and the follow call-to-action at the end."""
+def add_text_overlays(chain, cur, cfg, script, total, static=False):
+    """Hook title (first seconds), red LIVE tag (not in static mode: a blinking badge is movement), channel name,
+    and the follow call-to-action at the end."""
     if not Path(FONT_BOLD).exists():
         return cur
     hook = (script.get("thumb_text") or script.get("title") or "WAIT FOR IT").upper()
@@ -730,9 +755,12 @@ def add_text_overlays(chain, cur, cfg, script, total):
     (BUILD / "outro.txt").write_text(cfg.get("shorts", {}).get("cta_text", "Follow for daily comedy"), encoding="utf-8")
     (BUILD / "live.txt").write_text("\u25cf LIVE", encoding="utf-8")
     box = ":box=1:boxcolor=black@0.38:boxborderw=14"
-    chain.append(
-        f"[{cur}]drawtext=fontfile={FONT_BOLD}:textfile=live.txt:fontsize=44:fontcolor=0xFF3B30:borderw=4:"
-        f"bordercolor=black@0.8:x=36:y=70:enable='lt(mod(t,1.6),1.1)'[tl]")
+    if static:
+        chain.append(f"[{cur}]null[tl]")
+    else:
+        chain.append(
+            f"[{cur}]drawtext=fontfile={FONT_BOLD}:textfile=live.txt:fontsize=44:fontcolor=0xFF3B30:borderw=4:"
+            f"bordercolor=black@0.8:x=36:y=70:enable='lt(mod(t,1.6),1.1)'[tl]")
     chain.append(
         f"[tl]drawtext=fontfile={FONT_BOLD}:textfile=intro.txt:fontsize=80:fontcolor=white:borderw=6:"
         f"bordercolor=black@0.85:line_spacing=8:x=(w-text_w)/2:y=130{box}:"
@@ -747,6 +775,8 @@ def add_text_overlays(chain, cur, cfg, script, total):
 
 
 def render_scene(cfg, args, script, timings, total, seed, rdir):
+    static = only_mouth_moves(cfg)
+    log(f"[edit] only_mouth_moves={static}")
     write_ass(timings, BUILD / "captions.ass")
     build_audio(timings, rdir / "voice.wav", BUILD / "mix.wav", [])
 
@@ -762,21 +792,27 @@ def render_scene(cfg, args, script, timings, total, seed, rdir):
         if not pool:
             fail("assets/bodies/ has no pictures (run the workflow once with 'new_face' ticked)")
         from PIL import Image
-        first_only = cfg.get("visuals", {}).get("base_mode", "single") == "single"
-        pic = pool[0] if first_only else pool[seed % len(pool)]
+        pic = todays_comedian(cfg, pool, seed)
+        log(f"[edit] fallback picture: {pic.name}")
         fit_916(Image.open(pic), W, H).save(BUILD / "fallback_base.png")
         talking = BUILD / "fallback_main.mp4"
+        if static:       # still frame, no zoom
+            vf = f"scale={W}:{H}:flags=lanczos,setsar=1,format=yuv420p"
+        else:
+            vf = (f"scale={int(W * 1.1)}:{int(H * 1.1)},zoompan=z='min(1.0+0.00006*on,1.08)':x='iw/2-(iw/zoom/2)':"
+                  f"y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={FPS},format=yuv420p")
         sh(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", str(FPS), "-i", str(BUILD / "fallback_base.png"),
-            "-vf", f"scale={int(W * 1.1)}:{int(H * 1.1)},zoompan=z='min(1.0+0.00006*on,1.08)':x='iw/2-(iw/zoom/2)':"
-                   f"y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={FPS},format=yuv420p",
-            "-t", f"{total + 8:.1f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(talking)])
+            "-vf", vf, "-t", f"{total + 8:.1f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(talking)])
 
-    shots = plan_shots(timings, seed, min_len=4.6) if cfg.get("visuals", {}).get("camera_cuts", True) else [(0.0, "wide")]
+    if static or not cfg.get("visuals", {}).get("camera_cuts", True):
+        shots = [(0.0, "wide")]
+    else:
+        shots = plan_shots(timings, seed, min_len=4.6)
     log(f"[edit] camera plan: {[(round(t, 1), n) for t, n in shots]}")
-    chain = scene_chain(shots)
+    chain = scene_chain(shots, static=static)
     inputs = ["-i", str(talking)]
     cur = "v0"
-    wins = scene_cutaways(timings, seed, cfg)
+    wins = [] if static else scene_cutaways(timings, seed, cfg)
     for k, (a, b, clip) in enumerate(wins):
         inputs += ["-i", str(clip)]
         chain.append(f"[{k + 1}:v]setpts=PTS-STARTPTS+{a:.3f}/TB[cv{k}]")
@@ -785,13 +821,23 @@ def render_scene(cfg, args, script, timings, total, seed, rdir):
     log(f"[edit] audience reaction cutaways: {len(wins)}")
     audio_idx = 1 + len(wins)
     inputs += ["-i", str(BUILD / "mix.wav")]
-    chain.append(f"[{cur}]vignette=PI/5,eq=brightness='0.010*sin(2*PI*t/2.7)':eval=frame[vg]")
-    cur = add_text_overlays(chain, "vg", cfg, script, total)
+    if static:        # fixed vignette only: no flickering light
+        chain.append(f"[{cur}]vignette=PI/5[vg]")
+    else:
+        chain.append(f"[{cur}]vignette=PI/5,eq=brightness='0.010*sin(2*PI*t/2.7)':eval=frame[vg]")
+    cur = add_text_overlays(chain, "vg", cfg, script, total, static=static)
     chain.append(f"[{cur}]subtitles=captions.ass:fontsdir=/usr/share/fonts[vout]")
 
     final = BUILD / "final.mp4"
+    if static:
+        # A still picture: x264's default keyframe every 10 s makes the whole picture "breathe" slightly at each keyframe.
+        # One long GOP and the still-image tune keep it perfectly steady (the file stays small because nothing moves).
+        venc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-tune", "stillimage",
+                "-x264-params", "keyint=infinite:min-keyint=infinite:scenecut=0"]
+    else:
+        venc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22"]
     sh(["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(chain), "-map", "[vout]", "-map", f"{audio_idx}:a",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-r", str(FPS),
+        *venc, "-pix_fmt", "yuv420p", "-r", str(FPS),
         "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-t", f"{total:.2f}", str(final)], cwd=str(BUILD))
     log(f"[edit] done: {final} ({final.stat().st_size / 1e6:.1f} MB, {total:.0f}s, mode={args.mode}, layout=scene)")
 
